@@ -1,0 +1,17 @@
+/*
+	App.css
+
+	NOTE: Tailwind's directives (@tailwind base/components/utilities) should live in a
+	single entry stylesheet that your app imports (this project uses `src/index.css`).
+	Keeping them in more than one file can cause duplicate output and build issues.
+
+	Use this file for component-scoped or hand-written CSS only. If you don't need any
+	custom CSS here, you can leave this file as-is or delete it.
+*/
+
+/* Example component-level CSS */
+.my-app-hero {
+	/* placeholder to avoid empty ruleset - replace with your styles */
+	--_placeholder: 0;
+}
+
