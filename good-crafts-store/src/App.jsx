@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingCart, X, Plus, Minus, Menu, Trash2, Check, ExternalLink, Key, Wallet, Coins, Heart, Star, Instagram, Facebook, Settings } from 'lucide-react';
+import logo from './assets/GoodCraftslogo.jpg';
 import { useProducts } from './ProductContext';
 import { useAuth } from './AuthContext';
 import { AdminPanel } from './AdminPanel';
@@ -192,7 +193,11 @@ const App = () => {
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-teal-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-              GC
+              <img 
+                  src={logo} 
+                  alt="Good Crafts Logo"
+                  className="w-8 h-8 rounded-full object-cover"
+                />
             </div>
             <span className="font-bold text-xl tracking-tight text-stone-900">Good Crafts<span className="hidden sm:inline"> by kmmk</span></span>
           </div>
@@ -321,10 +326,10 @@ const App = () => {
             <p className="text-sm">Taytay, Rizal, Philippines</p>
           </div>
           <div className="flex gap-4">
-            <a href="#" className="p-2 bg-stone-800 rounded-full hover:bg-stone-700 hover:text-white transition-colors">
+            <a href="https://www.facebook.com/profile.php?id=61561955998791" className="p-2 bg-stone-800 rounded-full hover:bg-stone-700 hover:text-white transition-colors">
               <Facebook size={20} />
             </a>
-            <a href="#" className="p-2 bg-stone-800 rounded-full hover:bg-stone-700 hover:text-white transition-colors">
+            <a href="https://www.instagram.com/goodcrafts_by_kmmk?igsh=MTN3aHhveDAzMXZoZA==" className="p-2 bg-stone-800 rounded-full hover:bg-stone-700 hover:text-white transition-colors">
               <Instagram size={20} />
             </a>
           </div>

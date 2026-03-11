@@ -675,18 +675,20 @@ export const AdminPanel = ({ onClose }) => {
                       <td className="p-3 text-sm">{Array.isArray(product.colors) ? product.colors.join(', ') : product.colors}</td>
                       <td className="p-3 text-center font-bold">{product.minOrder}</td>
                       <td className="p-3 text-center">
-                        <button
-                          onClick={() => handleOpenForm(product)}
-                          className="inline-flex items-center gap-1 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 mr-2"
-                        >
-                          <Edit2 size={16} /> Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(product.id)}
-                          className="inline-flex items-center gap-1 px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
-                        >
-                          <Trash2 size={16} /> Delete
-                        </button>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => handleOpenForm(product)}
+                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors shadow-sm whitespace-nowrap"
+                          >
+                            <Edit2 size={18} /> Edit
+                          </button>
+                          <button
+                            onClick={() => handleDelete(product.id)}
+                            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white font-semibold rounded-md hover:bg-red-700 transition-colors shadow-sm whitespace-nowrap"
+                          >
+                            <Trash2 size={18} /> Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -699,3 +701,4 @@ export const AdminPanel = ({ onClose }) => {
     </div>
   );
 };
+
