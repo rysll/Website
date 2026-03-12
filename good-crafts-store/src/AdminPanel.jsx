@@ -5,7 +5,7 @@ import { X, Plus, Edit2, Trash2, LogOut, AlertCircle, Upload, FileText } from 'l
 import { supabase } from './supabaseClient';
 import * as XLSX from 'xlsx';
 
-export const AdminPanel = ({ onClose }) => {
+export const AdminPanel = ({ onClose, onOpenDashboard }) => {
   const { products, addProduct, updateProduct, deleteProduct } = useProducts();
   const { logout } = useAuth();
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -302,6 +302,12 @@ export const AdminPanel = ({ onClose }) => {
         <div className="sticky top-0 bg-stone-900 text-white p-6 flex items-center justify-between border-b">
           <h2 className="text-2xl font-bold">Admin Panel - Manage Products</h2>
           <div className="flex items-center gap-2">
+            {onOpenDashboard && (
+              <button
+              onClick={onOpenDashboard}  // ← just this, no onClose()
+              className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700"
+            >Dashboard</button>
+            )}
             <button
               onClick={() => {
                 logout();
@@ -323,8 +329,7 @@ export const AdminPanel = ({ onClose }) => {
         </div>
 
         <div className="p-6">
-          {/* Add Product Buttons */}
-          {!isFormOpen && !isBatchMode && (
+            {!isFormOpen && !isBatchMode && (
             <div className="mb-6 flex gap-2 flex-wrap">
               <button
                 onClick={() => handleOpenForm()}

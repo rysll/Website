@@ -1,15 +1,26 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 
 const OrderContext = createContext();
+
+export const ORDER_STATUSES = [
+  'order placed',
+  'order packed',
+  'in transit',
+  'out for delivery',
+  'delivered'
+];
+
+// Maps each status to a step index (0-based) for the tracker
+export const STATUS_STEP = Object.fromEntries(ORDER_STATUSES.map((s, i) => [s, i]));
 
 export const OrderProvider = ({ children }) => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Fetch all orders
-  const fetchOrders = async () => {
+  // Fetch all orders — stable reference via useCallback
+  const fetchOrders = useCallback(async () => {
     try {
       setLoading(true);
       const { data, error: fetchError } = await supabase
@@ -26,9 +37,9 @@ export const OrderProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  // Fetch single order
+  // Fetch single order by ID (used by tracker)
   const getOrder = async (orderId) => {
     try {
       const { data, error: fetchError } = await supabase
@@ -45,26 +56,25 @@ export const OrderProvider = ({ children }) => {
     }
   };
 
-  // Create new order
+  // Create new order — now includes customer_phone and customer_address
   const createOrder = async (orderData) => {
     try {
+      const initialStatus = ORDER_STATUSES[0];
       const { data, error: insertError } = await supabase
         .from('orders')
         .insert([{
           ...orderData,
-          status: 'processing',
+          status: initialStatus,
           created_at: new Date().toISOString()
         }])
         .select()
         .single();
 
       if (insertError) throw insertError;
-      
-      setOrders([data, ...orders]);
-      
-      // Send notification email
+
+      setOrders(prev => [data, ...prev]);
       await sendOrderNotification(data, 'order_created');
-      
+
       return data;
     } catch (err) {
       console.error('Error creating order:', err);
@@ -75,35 +85,39 @@ export const OrderProvider = ({ children }) => {
   // Update order status
   const updateOrderStatus = async (orderId, newStatus) => {
     try {
+      if (!ORDER_STATUSES.includes(newStatus)) {
+        throw new Error(`Invalid status: ${newStatus}`);
+      }
+
       const { data, error: updateError } = await supabase
         .from('orders')
-        .update({ 
-          status: newStatus,
-          updated_at: new Date().toISOString()
-        })
+        .update({ status: newStatus })
         .eq('id', orderId)
         .select()
         .single();
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('Supabase update error:', JSON.stringify(updateError, null, 2));
+        throw new Error(updateError.message || 'Supabase update failed');
+      }
 
-      setOrders(orders.map(order => order.id === orderId ? data : order));
-      
-      // Send status update email
-      const order = await getOrder(orderId);
-      await sendOrderNotification(order, 'status_update', newStatus);
-      
+      setOrders(prev => prev.map(o => o.id === orderId ? data : o));
+
+      // Notify customer of status change (non-blocking)
+      sendOrderNotification(data, 'status_update', newStatus).catch(err =>
+        console.warn('Email notification failed (non-critical):', err)
+      );
+
       return data;
     } catch (err) {
-      console.error('Error updating order status:', err);
+      console.error('Error updating order status:', err.message);
       throw err;
     }
   };
 
-  // Send email notification
+  // Send email notification via Supabase Edge Function
   const sendOrderNotification = async (order, type, newStatus = null) => {
     try {
-      // Call Supabase Edge Function to send email
       const { data, error } = await supabase.functions.invoke('send-order-email', {
         body: {
           type,
@@ -113,19 +127,15 @@ export const OrderProvider = ({ children }) => {
           customerName: order.customer_name
         }
       });
-
-      if (error) {
-        console.error('Error sending email:', error);
-        // Don't throw - email failure shouldn't block order operations
-      }
+      if (error) console.error('Error sending email:', error);
       return data;
     } catch (err) {
       console.error('Error in sendOrderNotification:', err);
-      // Silently fail - log but don't throw
+      // Silently fail — email failure shouldn't block order operations
     }
   };
 
-  // Subscribe to real-time order updates
+  // Real-time subscription
   useEffect(() => {
     fetchOrders();
 
@@ -136,9 +146,7 @@ export const OrderProvider = ({ children }) => {
       })
       .subscribe();
 
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => { subscription.unsubscribe(); };
   }, []);
 
   return (
@@ -159,8 +167,6 @@ export const OrderProvider = ({ children }) => {
 
 export const useOrders = () => {
   const context = useContext(OrderContext);
-  if (!context) {
-    throw new Error('useOrders must be used within OrderProvider');
-  }
+  if (!context) throw new Error('useOrders must be used within OrderProvider');
   return context;
 };
