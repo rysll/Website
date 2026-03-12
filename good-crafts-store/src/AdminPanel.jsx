@@ -10,6 +10,20 @@ import { supabase } from './supabaseClient';
 // ─── Supabase Storage bucket name ─────────────────────────────────────────────
 const BUCKET = 'product-images';
 
+// Shared category list — single source of truth
+const CATEGORIES = [
+  { key: 'Leather',    emoji: '🪡', label: 'Leather Goods' },
+  { key: 'Keychains',  emoji: '🔑', label: 'Keychains & Pins' },
+  { key: 'Magnets',    emoji: '🧲', label: 'Magnets' },
+  { key: 'Stationery', emoji: '✏️', label: 'Stationery' },
+  { key: 'Novelty',    emoji: '🎁', label: 'Novelty' },
+];
+
+const categoryLabel = (key) => {
+  const c = CATEGORIES.find(c => c.key === key);
+  return c ? `${c.emoji} ${c.label}` : key || '—';
+};
+
 // ─── Upload a single File object to Supabase Storage ──────────────────────────
 async function uploadFile(file, productName) {
   const ext  = file.name.split('.').pop().toLowerCase();
@@ -19,9 +33,12 @@ async function uploadFile(file, productName) {
   const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
     cacheControl: '3600',
     upsert: false,
-    contentType: file.type,
+    contentType: file.type || 'image/jpeg',
   });
-  if (error) throw error;
+  if (error) {
+    // Surface the real Supabase Storage error message
+    throw new Error(error.message || error.error || JSON.stringify(error));
+  }
 
   const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
   return data.publicUrl;
@@ -270,12 +287,28 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
     description: product.description || '',
     basePrice:   product.basePrice   || 0,
     minOrder:    product.minOrder    || 1,
-    colors:      Array.isArray(product.colors)
-                   ? product.colors.join(', ')
-                   : (product.colors || ''),
+    // colors is TEXT in DB — stored as comma-separated string e.g. "Tan, Red, Black"
+    // Strip any accidental JSON brackets if old data was saved as array string
+    colors: (() => {
+      const raw = product.colors || '';
+      // If it looks like a JSON array string ["Tan","Red"] → parse and rejoin cleanly
+      if (raw.trim().startsWith('[')) {
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed.join(', ') : raw;
+        } catch { return raw; }
+      }
+      return raw;
+    })(),
+    category:    product.category || '',
     imageUrls: (() => {
-      if (product.image_urls && Array.isArray(product.image_urls) && product.image_urls.length > 0)
-        return product.image_urls;
+      // image_urls is JSONB — Supabase returns it as a parsed array
+      let urls = product.image_urls;
+      // Safety: handle if it somehow comes back as a JSON string
+      if (typeof urls === 'string') {
+        try { urls = JSON.parse(urls); } catch { urls = null; }
+      }
+      if (Array.isArray(urls) && urls.length > 0) return urls;
       if (product.image_url) return [product.image_url];
       return [];
     })(),
@@ -301,9 +334,13 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
         description: form.description.trim(),
         basePrice:   Number(form.basePrice),
         minOrder:    Number(form.minOrder),
-        colors:      form.colors.split(',').map(c => c.trim()).filter(Boolean),
-        image_url:   imageUrls[0] || null,
-        image_urls:  imageUrls.length > 0 ? imageUrls : null,
+        // colors is TEXT in DB — save as clean comma-separated string
+        colors:     form.colors.split(',').map(c => c.trim()).filter(Boolean).join(', '),
+        image_url:  imageUrls[0] || null,
+        // image_urls is JSONB — pass JS array directly, Supabase handles serialization
+        image_urls: imageUrls.length > 0 ? imageUrls : null,
+        category:    form.category || null,
+        updated_at:  new Date().toISOString(),
       };
 
       const { data, error: supaErr } = await supabase
@@ -313,7 +350,13 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
         .select()
         .single();
 
-      if (supaErr) throw supaErr;
+      if (supaErr) {
+        throw new Error(
+          supaErr.message
+            ? `DB error: ${supaErr.message}${supaErr.details ? ` — ${supaErr.details}` : ''}`
+            : JSON.stringify(supaErr)
+        );
+      }
 
       setSaved(true);
       setTimeout(() => onSaved(data), 600);
@@ -373,8 +416,23 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
           <div>
             <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">Colors (comma-separated)</label>
             <input value={form.colors} onChange={e => setField('colors', e.target.value)}
-              placeholder="e.g. Brown, Black, Tan"
+              placeholder="e.g. Tan, Red, Navy Blue, Black"
               className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-teal-500 outline-none" />
+          </div>
+
+          {/* Category */}
+          <div>
+            <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">Category</label>
+            <select
+              value={form.category}
+              onChange={e => setField('category', e.target.value)}
+              className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-teal-500 outline-none bg-white"
+            >
+              <option value="">— Select a category —</option>
+              {CATEGORIES.map(c => (
+                <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
+              ))}
+            </select>
           </div>
 
           {/* Image Upload */}
@@ -423,7 +481,7 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
 // ─── Add Product Modal ────────────────────────────────────────────────────────
 const AddProductModal = ({ onClose, onAdded }) => {
   const [form, setForm] = useState({
-    name: '', description: '', basePrice: '', minOrder: 1, colors: '', imageUrls: [],
+    name: '', description: '', basePrice: '', minOrder: 1, colors: '', category: '', imageUrls: [],
   });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState('');
@@ -443,11 +501,18 @@ const AddProductModal = ({ onClose, onAdded }) => {
         description: form.description.trim(),
         basePrice:   Number(form.basePrice),
         minOrder:    Number(form.minOrder) || 1,
-        colors:      form.colors.split(',').map(c => c.trim()).filter(Boolean),
-        image_url:   imageUrls[0] || null,
-        image_urls:  imageUrls.length > 0 ? imageUrls : null,
+        colors:     form.colors.split(',').map(c => c.trim()).filter(Boolean).join(', '),
+        image_url:  imageUrls[0] || null,
+        image_urls: imageUrls.length > 0 ? imageUrls : null,
+        category:   form.category || null,
       }]).select().single();
-      if (supaErr) throw supaErr;
+      if (supaErr) {
+        throw new Error(
+          supaErr.message
+            ? `DB error: ${supaErr.message}${supaErr.details ? ` — ${supaErr.details}` : ''}`
+            : JSON.stringify(supaErr)
+        );
+      }
       onAdded(data);
     } catch (err) {
       setError(err.message || 'Failed to add product.');
@@ -502,8 +567,23 @@ const AddProductModal = ({ onClose, onAdded }) => {
           <div>
             <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">Colors (comma-separated)</label>
             <input value={form.colors} onChange={e => setField('colors', e.target.value)}
-              placeholder="e.g. Brown, Black, Tan"
+              placeholder="e.g. Tan, Red, Navy Blue, Black"
               className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-teal-500 outline-none" />
+          </div>
+
+          {/* Category */}
+          <div>
+            <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">Category</label>
+            <select
+              value={form.category}
+              onChange={e => setField('category', e.target.value)}
+              className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-teal-500 outline-none bg-white"
+            >
+              <option value="">— Select a category —</option>
+              {CATEGORIES.map(c => (
+                <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
+              ))}
+            </select>
           </div>
 
           <div>
@@ -547,6 +627,25 @@ export const AdminPanel = ({ onClose, onOpenDashboard }) => {
   const [deleting,  setDeleting]   = useState(false);
   const [search,    setSearch]     = useState('');
   const [localProducts, setLocalProducts] = useState(null);
+  const [updatingCategoryId, setUpdatingCategoryId] = useState(null);
+
+  const handleCategoryChange = async (product, newCategory) => {
+    setUpdatingCategoryId(product.id);
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .update({ category: newCategory || null })
+        .eq('id', product.id)
+        .select()
+        .single();
+      if (error) throw error;
+      setLocalProducts(prev => (prev ?? products).map(p => p.id === data.id ? { ...p, ...data } : p));
+    } catch (err) {
+      alert('Failed to update category: ' + err.message);
+    } finally {
+      setUpdatingCategoryId(null);
+    }
+  };
 
   useEffect(() => { setLocalProducts(products); }, [products]);
 
@@ -571,7 +670,9 @@ export const AdminPanel = ({ onClose, onOpenDashboard }) => {
   };
 
   const getImages = (p) => {
-    if (p.image_urls && Array.isArray(p.image_urls) && p.image_urls.length > 0) return p.image_urls;
+    let urls = p.image_urls;
+    if (typeof urls === 'string') { try { urls = JSON.parse(urls); } catch { urls = null; } }
+    if (Array.isArray(urls) && urls.length > 0) return urls;
     if (p.image_url) return [p.image_url];
     return [];
   };
@@ -632,6 +733,30 @@ export const AdminPanel = ({ onClose, onOpenDashboard }) => {
                           <span className="font-bold text-teal-600 text-sm shrink-0">₱{Number(product.basePrice || 0).toFixed(2)}</span>
                         </div>
                         <p className="text-xs text-stone-400 line-clamp-2 mb-2">{product.description}</p>
+                        {/* Quick category selector */}
+                        <div className="mb-2">
+                          <select
+                            value={product.category || ''}
+                            disabled={updatingCategoryId === product.id}
+                            onChange={e => handleCategoryChange(product, e.target.value)}
+                            className={`w-full text-xs border rounded-lg px-2 py-1.5 outline-none transition-all ${
+                              product.category
+                                ? 'border-teal-200 bg-teal-50 text-teal-700 font-semibold focus:ring-2 focus:ring-teal-400'
+                                : 'border-amber-200 bg-amber-50 text-amber-600 font-semibold focus:ring-2 focus:ring-amber-400'
+                            } ${updatingCategoryId === product.id ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
+                          >
+                            <option value="">⚠️ No category set</option>
+                            {CATEGORIES.map(c => (
+                              <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
+                            ))}
+                          </select>
+                          {updatingCategoryId === product.id && (
+                            <p className="text-xs text-teal-500 mt-0.5 flex items-center gap-1">
+                              <span className="animate-spin inline-block w-3 h-3 border border-teal-400 border-t-transparent rounded-full" />
+                              Saving…
+                            </p>
+                          )}
+                        </div>
                         <div className="flex items-center justify-between text-xs text-stone-400">
                           <span>Min: {product.minOrder || 1}pcs</span>
                           {images.length > 1 && (

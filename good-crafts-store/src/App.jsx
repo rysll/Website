@@ -138,6 +138,7 @@ const App = () => {
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [activeFilter, setActiveFilter] = useState('All');
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [customization, setCustomization] = useState({
@@ -444,10 +445,54 @@ const App = () => {
 
       {/* --- PRODUCT GRID --- */}
       <main id="products" className="max-w-6xl mx-auto px-4 py-16">
-        <h2 className="text-3xl font-bold text-center mb-4 text-stone-800">Our Collections</h2>
-        <p className="text-center text-stone-500 mb-12 max-w-lg mx-auto">
+        <h2 className="text-3xl font-bold text-center mb-2 text-stone-800">Our Collections</h2>
+        <p className="text-center text-stone-500 mb-8 max-w-lg mx-auto">
           Choose your base item below. You can customize colors and names after clicking "Customize".
         </p>
+
+        {/* ── Category Filter Pills ── */}
+        {!loading && products.length > 0 && (() => {
+          const CATEGORIES = [
+            { key: 'All',        emoji: '✨', label: 'All Products' },
+            { key: 'Leather',    emoji: '🪡', label: 'Leather Goods' },
+            { key: 'Keychains',  emoji: '🔑', label: 'Keychains & Pins' },
+            { key: 'Magnets',    emoji: '🧲', label: 'Magnets' },
+            { key: 'Stationery', emoji: '✏️', label: 'Stationery' },
+            { key: 'Novelty',    emoji: '🎁', label: 'Novelty' },
+          ];
+          const counts = {};
+          products.forEach(p => {
+            const c = p.category || 'Uncategorized';
+            counts[c] = (counts[c] || 0) + 1;
+          });
+          return (
+            <div className="flex flex-wrap justify-center gap-2 mb-10">
+              {CATEGORIES.map(cat => {
+                const count = cat.key === 'All'
+                  ? products.length
+                  : products.filter(p => p.category === cat.key).length;
+                if (cat.key !== 'All' && count === 0) return null;
+                return (
+                  <button
+                    key={cat.key}
+                    onClick={() => setActiveFilter(cat.key)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold border transition-all duration-200 ${
+                      activeFilter === cat.key
+                        ? 'bg-teal-600 text-white border-teal-600 shadow-md shadow-teal-200 scale-105'
+                        : 'bg-white text-stone-600 border-stone-200 hover:border-teal-400 hover:text-teal-700 hover:bg-teal-50'
+                    }`}
+                  >
+                    <span>{cat.emoji}</span>
+                    <span>{cat.label}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
+                      activeFilter === cat.key ? 'bg-white/25 text-white' : 'bg-stone-100 text-stone-500'
+                    }`}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {loading ? (
           <div className="flex items-center justify-center h-64">
@@ -457,29 +502,52 @@ const App = () => {
           <div className="flex items-center justify-center h-64">
             <p className="text-stone-500 text-lg">No products available yet.</p>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {products.map(product => (
-              <div key={product.id} className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border border-stone-100 overflow-hidden flex flex-col">
-                <ProductImageSlider product={product} />
+        ) : (() => {
+          const filtered = activeFilter === 'All'
+            ? products
+            : products.filter(p => p.category === activeFilter);
 
-                <div className="p-5 flex-1 flex flex-col">
-                  <h3 className="font-bold text-lg text-stone-800 mb-1">{product.name}</h3>
-                  <p className="text-stone-500 text-sm mb-4 line-clamp-2">{product.description}</p>
-                  <div className="mt-auto flex items-center justify-between">
-                    <div className="text-stone-900 font-bold text-lg">₱{product.basePrice.toFixed(2)}</div>
-                    <button
-                      onClick={() => openProductModal(product)}
-                      className="bg-stone-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-stone-800 transition-colors"
-                    >
-                      Customize
-                    </button>
+          if (filtered.length === 0) return (
+            <div className="flex flex-col items-center justify-center h-48 gap-3 text-stone-400">
+              <span className="text-5xl">🔍</span>
+              <p className="text-lg font-medium">No products in this category yet.</p>
+              <button onClick={() => setActiveFilter('All')} className="text-teal-600 text-sm font-semibold hover:underline">
+                View all products
+              </button>
+            </div>
+          );
+
+          return (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {filtered.map(product => (
+                <div key={product.id} className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border border-stone-100 overflow-hidden flex flex-col group">
+                  <ProductImageSlider product={product} />
+                  <div className="p-5 flex-1 flex flex-col">
+                    {product.category && (() => {
+                      const CAT_MAP = {Leather:'🪡 Leather',Keychains:'🔑 Keychains & Pins',Magnets:'🧲 Magnets',Stationery:'✏️ Stationery',Novelty:'🎁 Novelty'};
+                      return (
+                        <span className="inline-block text-xs font-semibold text-teal-600 bg-teal-50 px-2 py-0.5 rounded-full mb-2 w-fit">
+                          {CAT_MAP[product.category] || product.category}
+                        </span>
+                      );
+                    })()}
+                    <h3 className="font-bold text-lg text-stone-800 mb-1">{product.name}</h3>
+                    <p className="text-stone-500 text-sm mb-4 line-clamp-2">{product.description}</p>
+                    <div className="mt-auto flex items-center justify-between">
+                      <div className="text-stone-900 font-bold text-lg">₱{product.basePrice.toFixed(2)}</div>
+                      <button
+                        onClick={() => openProductModal(product)}
+                        className="bg-stone-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-teal-700 transition-colors"
+                      >
+                        Customize
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          );
+        })()}
 
         <div className="mt-20 bg-amber-50 border border-amber-100 rounded-2xl p-8 text-center">
           <h3 className="text-xl font-bold text-amber-900 mb-2 flex items-center justify-center gap-2">
