@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { useOrders, ORDER_STATUSES, STATUS_STEP } from './OrderContext.jsx';
+import { useOrders, ORDER_STATUSES, STATUS_STEP, formatOrderId } from './OrderContext.jsx';
+import { supabase } from './supabaseClient';
 import {
   Search, Package, PackageCheck, Truck, MapPin,
   CheckCircle2, Clock, X, ChevronRight, Phone, Mail, User
 } from 'lucide-react';
- 
+
 const STEP_ICONS = [Package, PackageCheck, Truck, MapPin, CheckCircle2];
- 
+
 const STEP_DESCRIPTIONS = [
   'Your order has been received and is being reviewed.',
   'Your items are being carefully packed for shipment.',
@@ -14,7 +15,7 @@ const STEP_DESCRIPTIONS = [
   'Your package is with the courier and heading to you.',
   'Your order has been delivered. Enjoy!'
 ];
- 
+
 export const OrderTracker = ({ onClose }) => {
   const { getOrder } = useOrders();
   const [orderId, setOrderId] = useState('');
@@ -22,33 +23,54 @@ export const OrderTracker = ({ onClose }) => {
   const [searching, setSearching] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState('');
- 
+
   const handleSearch = async (e) => {
     e.preventDefault();
-    const trimmed = orderId.trim();
+    const trimmed = orderId.trim().toUpperCase();
     if (!trimmed) return;
- 
+
     setSearching(true);
     setNotFound(false);
     setError('');
     setOrder(null);
- 
+
     try {
-      const found = await getOrder(trimmed);
-      if (found) {
-        setOrder(found);
+      // Try order_number first (e.g. "GC-0001"), then fall back to numeric id
+      let found = null;
+
+      // Search by order_number
+      const { data: byNumber } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('order_number', trimmed)
+        .maybeSingle();
+
+      if (byNumber) {
+        found = byNumber;
       } else {
-        setNotFound(true);
+        // Fall back to numeric ID
+        const numericId = parseInt(trimmed.replace(/[^0-9]/g, ''));
+        if (!isNaN(numericId)) {
+          const { data: byId } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', numericId)
+            .maybeSingle();
+          found = byId;
+        }
       }
+
+      if (found) setOrder(found);
+      else setNotFound(true);
     } catch (err) {
       setError('Something went wrong. Please try again.');
     } finally {
       setSearching(false);
     }
   };
- 
+
   const currentStep = order ? (STATUS_STEP[order.status] ?? 0) : 0;
- 
+
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
     return new Date(dateStr).toLocaleDateString('en-PH', {
@@ -56,11 +78,11 @@ export const OrderTracker = ({ onClose }) => {
       hour: '2-digit', minute: '2-digit'
     });
   };
- 
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
- 
+
         {/* Header */}
         <div className="sticky top-0 bg-white border-b border-stone-100 px-6 py-4 flex items-center justify-between rounded-t-2xl z-10">
           <div>
@@ -74,7 +96,7 @@ export const OrderTracker = ({ onClose }) => {
             <X size={20} />
           </button>
         </div>
- 
+
         <div className="p-6">
           {/* Search Form */}
           <form onSubmit={handleSearch} className="flex gap-2 mb-6">
@@ -84,7 +106,7 @@ export const OrderTracker = ({ onClose }) => {
                 type="text"
                 value={orderId}
                 onChange={e => { setOrderId(e.target.value); setNotFound(false); setOrder(null); }}
-                placeholder="Enter your Order ID (e.g. 12345)"
+                placeholder="Enter your Order ID (e.g. GC-0001)"
                 className="w-full pl-9 pr-4 py-3 border border-stone-200 rounded-xl text-sm bg-stone-50 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
               />
             </div>
@@ -106,7 +128,7 @@ export const OrderTracker = ({ onClose }) => {
               )}
             </button>
           </form>
- 
+
           {/* Not Found */}
           {notFound && (
             <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-center mb-4">
@@ -114,23 +136,25 @@ export const OrderTracker = ({ onClose }) => {
               <p className="text-red-500 text-xs mt-1">Double-check your Order ID from your confirmation message.</p>
             </div>
           )}
- 
+
           {/* Error */}
           {error && (
             <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-center mb-4">
               <p className="text-red-700 text-sm">{error}</p>
             </div>
           )}
- 
+
           {/* Order Result */}
           {order && (
             <div className="space-y-5">
- 
+
               {/* Order Summary Banner */}
               <div className="bg-teal-50 border border-teal-100 rounded-2xl p-4 flex items-center justify-between">
                 <div>
                   <p className="text-xs text-teal-600 font-semibold uppercase tracking-wider mb-0.5">Order ID</p>
-                  <p className="text-stone-900 font-bold font-mono">{order.id}</p>
+                  <p className="text-stone-900 font-bold font-mono">
+                    {order.order_number || formatOrderId(order.id)}
+                  </p>
                   <p className="text-xs text-stone-500 mt-1">Placed on {formatDate(order.created_at)}</p>
                 </div>
                 <div className="text-right">
@@ -140,7 +164,7 @@ export const OrderTracker = ({ onClose }) => {
                   </span>
                 </div>
               </div>
- 
+
               {/* Progress Stepper */}
               <div className="bg-white border border-stone-100 rounded-2xl p-5">
                 <h3 className="text-sm font-bold text-stone-700 mb-5">Delivery Progress</h3>
@@ -151,7 +175,7 @@ export const OrderTracker = ({ onClose }) => {
                     const isActive = idx === currentStep;
                     const isPending = idx > currentStep;
                     const isLast = idx === ORDER_STATUSES.length - 1;
- 
+
                     return (
                       <div key={status} className="flex gap-4">
                         {/* Icon column */}
@@ -171,7 +195,7 @@ export const OrderTracker = ({ onClose }) => {
                             <div className={`w-0.5 h-8 mt-1 ${isDone ? 'bg-teal-400' : 'bg-stone-200'}`} />
                           )}
                         </div>
- 
+
                         {/* Content column */}
                         <div className={`pb-6 flex-1 ${isLast ? 'pb-0' : ''}`}>
                           <p className={`text-sm font-semibold capitalize mb-0.5 ${
@@ -194,7 +218,7 @@ export const OrderTracker = ({ onClose }) => {
                   })}
                 </div>
               </div>
- 
+
               {/* Customer Info */}
               <div className="bg-white border border-stone-100 rounded-2xl p-5">
                 <h3 className="text-sm font-bold text-stone-700 mb-4">Delivery Information</h3>
@@ -217,7 +241,7 @@ export const OrderTracker = ({ onClose }) => {
                   ) : null)}
                 </div>
               </div>
- 
+
               {/* Order Items */}
               {order.items && order.items.length > 0 && (
                 <div className="bg-white border border-stone-100 rounded-2xl p-5">
@@ -248,7 +272,7 @@ export const OrderTracker = ({ onClose }) => {
                   </div>
                 </div>
               )}
- 
+
               {/* Help note */}
               <p className="text-center text-xs text-stone-400">
                 Questions about your order? Message us on{' '}

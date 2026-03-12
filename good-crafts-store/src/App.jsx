@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingCart, X, Plus, Minus, Menu, Trash2, Check, ExternalLink, Key, Wallet, Coins, Heart, Star, Instagram, Facebook, Settings, Package } from 'lucide-react';
-import { useOrders, ORDER_STATUSES } from './OrderContext.jsx';
+import { useOrders, ORDER_STATUSES, getPaymentAmounts, DOWNPAYMENT_RATE } from './OrderContext.jsx';
 import logo from './assets/GoodCraftslogo.jpg';
 import { useProducts } from './ProductContext';
 import { useAuth } from './AuthContext';
@@ -8,6 +8,129 @@ import { AdminPanel } from './AdminPanel';
 import { AdminLogin } from './AdminLogin';
 import { AdminDashboard } from './AdminDashboard';
 import { OrderTracker } from './OrderTracker';
+
+// ── Product Modal Image Slider ────────────────────────────────────────────────
+const ProductModalSlider = ({ images, productName }) => {
+  const [idx, setIdx] = React.useState(0);
+  React.useEffect(() => { setIdx(0); }, [productName]);
+
+  if (!images || images.length === 0) return null;
+
+  const prev = (e) => { e.stopPropagation(); setIdx(i => (i - 1 + images.length) % images.length); };
+  const next = (e) => { e.stopPropagation(); setIdx(i => (i + 1) % images.length); };
+
+  return (
+    <div className="relative w-full bg-stone-100 overflow-hidden select-none" style={{height: '260px'}}>
+      <img
+        key={idx}
+        src={images[idx]}
+        alt={`${productName} ${idx + 1}`}
+        className="w-full h-full object-cover"
+      />
+      {images.length > 1 && (
+        <>
+          <button onClick={prev}
+            className="absolute left-3 top-1/2 -translate-y-1/2 bg-black/55 hover:bg-black/80 text-white rounded-full p-2 transition-all shadow-lg z-10">
+            <ChevronLeft size={18} />
+          </button>
+          <button onClick={next}
+            className="absolute right-3 top-1/2 -translate-y-1/2 bg-black/55 hover:bg-black/80 text-white rounded-full p-2 transition-all shadow-lg z-10">
+            <ChevronRight size={18} />
+          </button>
+          {/* Dot strip */}
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
+            {images.map((_, i) => (
+              <button key={i} onClick={e => { e.stopPropagation(); setIdx(i); }}
+                className={`rounded-full transition-all duration-200 ${i === idx ? 'bg-white w-5 h-1.5' : 'bg-white/55 hover:bg-white/80 w-1.5 h-1.5'}`}
+              />
+            ))}
+          </div>
+          {/* Thumbnail strip at bottom */}
+          <div className="absolute bottom-0 left-0 right-0 flex gap-1.5 px-3 pb-8 justify-center pointer-events-none">
+          </div>
+          {/* Counter */}
+          <div className="absolute top-3 right-3 bg-black/55 text-white text-xs font-semibold px-2.5 py-1 rounded-full z-10">
+            {idx + 1} / {images.length}
+          </div>
+        </>
+      )}
+      {/* Thumbnail row */}
+      {images.length > 1 && (
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent pt-8 pb-2 px-3 flex gap-1.5 justify-center z-10">
+          {images.map((src, i) => (
+            <button key={i} onClick={e => { e.stopPropagation(); setIdx(i); }}
+              className={`w-10 h-10 rounded-lg overflow-hidden border-2 transition-all shrink-0 ${i === idx ? 'border-white scale-110' : 'border-white/40 hover:border-white/80 opacity-75 hover:opacity-100'}`}>
+              <img src={src} alt="" className="w-full h-full object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// ─── Storefront Image Slider ──────────────────────────────────────────────────
+const ProductImageSlider = ({ product }) => {
+  const [idx, setIdx] = React.useState(0);
+  const imgs = (product.image_urls && Array.isArray(product.image_urls) && product.image_urls.length > 0)
+    ? product.image_urls.filter(Boolean)
+    : product.image_url ? [product.image_url] : [];
+
+  React.useEffect(() => { setIdx(0); }, [product.id]);
+
+  const prev = (e) => { e.stopPropagation(); setIdx(i => (i - 1 + imgs.length) % imgs.length); };
+  const next = (e) => { e.stopPropagation(); setIdx(i => (i + 1) % imgs.length); };
+
+  if (imgs.length === 0) {
+    return (
+      <div className={`h-48 ${product.imageColor} flex items-center justify-center relative group overflow-hidden`}>
+        <div className="transform transition-transform group-hover:scale-110 duration-500">
+          {product.icon}
+        </div>
+        {product.minOrder > 1 && (
+          <div className="absolute top-3 left-3 bg-white/90 px-2 py-1 rounded text-xs font-bold text-stone-700">
+            Min. Order: {product.minOrder}pcs
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-48 relative group overflow-hidden bg-stone-100">
+      <img
+        key={idx}
+        src={imgs[idx]}
+        alt={`${product.name} ${idx + 1}`}
+        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+      />
+      {imgs.length > 1 && (
+        <>
+          <button onClick={prev} className="absolute left-1.5 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/75 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+            <ChevronLeft size={14} />
+          </button>
+          <button onClick={next} className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/75 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+            <ChevronRight size={14} />
+          </button>
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1 z-10">
+            {imgs.map((_, i) => (
+              <button key={i} onClick={e => { e.stopPropagation(); setIdx(i); }}
+                className={`rounded-full transition-all duration-200 ${i === idx ? 'bg-white w-3.5 h-1.5' : 'bg-white/50 hover:bg-white/80 w-1.5 h-1.5'}`}
+              />
+            ))}
+          </div>
+          <div className="absolute top-2 right-2 bg-black/50 text-white text-xs px-1.5 py-0.5 rounded-full z-10">{idx + 1}/{imgs.length}</div>
+        </>
+      )}
+      {product.minOrder > 1 && (
+        <div className="absolute top-3 left-3 bg-white/90 px-2 py-1 rounded text-xs font-bold text-stone-700 z-10">
+          Min. Order: {product.minOrder}pcs
+        </div>
+      )}
+    </div>
+  );
+};
 
 const App = () => {
   const { getProductsWithIcons, loading } = useProducts();
@@ -36,8 +159,64 @@ const App = () => {
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
 
   const { createOrder } = useOrders();
-
   const products = getProductsWithIcons();
+
+  // ── Hash-based routing: restore view on refresh ──────────────────────────
+  // On mount, read the hash and open the right panel if admin is logged in
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash === '#dashboard') {
+      if (isAdminLoggedIn) {
+        setIsDashboardOpen(true);
+      } else {
+        // Not logged in — show login so they can get back to dashboard
+        setIsLoginOpen(true);
+        // Clear hash so it doesn't loop
+        history.replaceState(null, '', window.location.pathname);
+      }
+    } else if (hash === '#admin') {
+      if (isAdminLoggedIn) {
+        setIsAdminOpen(true);
+      } else {
+        setIsLoginOpen(true);
+        history.replaceState(null, '', window.location.pathname);
+      }
+    }
+  }, [isAdminLoggedIn]);
+
+  // Keep hash in sync with open state
+  useEffect(() => {
+    if (isDashboardOpen) {
+      window.location.hash = 'dashboard';
+    } else if (isAdminOpen) {
+      window.location.hash = 'admin';
+    } else {
+      // Clear hash only if we're not on a product anchor
+      if (window.location.hash === '#dashboard' || window.location.hash === '#admin') {
+        history.replaceState(null, '', window.location.pathname);
+      }
+    }
+  }, [isDashboardOpen, isAdminOpen]);
+
+  // Listen for browser back/forward navigation
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash === '#dashboard' && isAdminLoggedIn) {
+        setIsDashboardOpen(true);
+        setIsAdminOpen(false);
+      } else if (hash === '#admin' && isAdminLoggedIn) {
+        setIsAdminOpen(true);
+        setIsDashboardOpen(false);
+      } else if (hash === '' || hash === '#products') {
+        setIsDashboardOpen(false);
+        setIsAdminOpen(false);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [isAdminLoggedIn]);
+  // ─────────────────────────────────────────────────────────────────────────
 
   const handleAdminClick = () => {
     if (isAdminLoggedIn) {
@@ -282,20 +461,7 @@ const App = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {products.map(product => (
               <div key={product.id} className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border border-stone-100 overflow-hidden flex flex-col">
-                <div className={`h-48 ${product.imageColor} flex items-center justify-center relative group overflow-hidden`}>
-                  {product.image_url ? (
-                    <img src={product.image_url} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                  ) : (
-                    <div className="transform transition-transform group-hover:scale-110 duration-500">
-                      {product.icon}
-                    </div>
-                  )}
-                  {product.minOrder > 1 && (
-                    <div className="absolute top-3 left-3 bg-white/90 px-2 py-1 rounded text-xs font-bold text-stone-700">
-                      Min. Order: {product.minOrder}pcs
-                    </div>
-                  )}
-                </div>
+                <ProductImageSlider product={product} />
 
                 <div className="p-5 flex-1 flex flex-col">
                   <h3 className="font-bold text-lg text-stone-800 mb-1">{product.name}</h3>
@@ -359,11 +525,22 @@ const App = () => {
             <button onClick={closeProductModal} className="absolute top-4 right-4 p-2 hover:bg-stone-100 rounded-full text-stone-500">
               <X size={20} />
             </button>
-            <div className="p-6">
-              <div className="flex items-center gap-4 mb-6">
-                <div className={`w-16 h-16 rounded-xl ${selectedProduct.imageColor} flex items-center justify-center shrink-0`}>
-                  {React.cloneElement(selectedProduct.icon, { size: 24 })}
-                </div>
+            <div className="p-0">
+              {/* ── Product Image Slider ── */}
+              {(() => {
+                const imgs = (selectedProduct.image_urls && Array.isArray(selectedProduct.image_urls) && selectedProduct.image_urls.length > 0)
+                  ? selectedProduct.image_urls.filter(Boolean)
+                  : selectedProduct.image_url ? [selectedProduct.image_url] : [];
+                return imgs.length > 0 ? (
+                  <ProductModalSlider images={imgs} productName={selectedProduct.name} />
+                ) : (
+                  <div className={`w-full h-48 ${selectedProduct.imageColor} flex items-center justify-center`}>
+                    {React.cloneElement(selectedProduct.icon, { size: 48 })}
+                  </div>
+                );
+              })()}
+              <div className="p-6 pt-4">
+              <div className="flex items-center justify-between mb-5">
                 <div>
                   <h3 className="text-xl font-bold text-stone-900">{selectedProduct.name}</h3>
                   <p className="text-stone-500 text-sm">Base Price: ₱{selectedProduct.basePrice}</p>
@@ -429,6 +606,7 @@ const App = () => {
                   Add to Cart
                 </button>
               </div>
+              </div>{/* close p-6 pt-4 */}
             </div>
           </div>
         </div>
@@ -574,7 +752,7 @@ const App = () => {
                 {checkoutErrors.customer_address && <p className="text-xs text-red-500 mt-1">{checkoutErrors.customer_address}</p>}
               </div>
 
-              {/* Order Summary */}
+              {/* Order Summary + Payment Breakdown */}
               <div className="bg-stone-50 rounded-xl p-4 border border-stone-100">
                 <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-2">Order Summary</p>
                 {cart.map(item => (
@@ -583,10 +761,27 @@ const App = () => {
                     <span className="font-semibold text-stone-900 shrink-0">₱{(item.price * item.quantity).toFixed(2)}</span>
                   </div>
                 ))}
-                <div className="flex justify-between text-sm font-bold text-teal-700 pt-2 border-t border-stone-200 mt-2">
+                <div className="flex justify-between text-sm font-bold text-stone-800 pt-2 border-t border-stone-200 mt-2">
                   <span>Total</span>
                   <span>₱{cartTotal.toFixed(2)}</span>
                 </div>
+              </div>
+              {/* Payment Policy Notice */}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <p className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  💳 Payment Schedule
+                </p>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-amber-700">Downpayment (50%) — Pay now to start production</span>
+                    <span className="font-bold text-amber-900">₱{getPaymentAmounts(cartTotal).downpayment.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-amber-700">Remaining balance — Pay before shipping</span>
+                    <span className="font-bold text-amber-900">₱{getPaymentAmounts(cartTotal).remaining.toFixed(2)}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-amber-600 mt-2">GCash / Bank Transfer details will be messaged to you via Facebook after placing your order.</p>
               </div>
             </div>
 
@@ -621,12 +816,32 @@ const App = () => {
             {/* Prominent Order ID */}
             <div className="bg-stone-50 border-2 border-stone-200 rounded-xl px-6 py-4 mb-4">
               <p className="text-xs text-stone-500 uppercase tracking-wider font-semibold mb-1">Your Order ID</p>
-              <p className="text-3xl font-extrabold text-teal-700 font-mono">#{createdOrder?.id}</p>
+              <p className="text-3xl font-extrabold text-teal-700 font-mono">
+                {createdOrder?.order_number || (createdOrder?.id ? `GC-${String(createdOrder.id).padStart(4,'0')}` : '—')}
+              </p>
               <p className="text-xs text-stone-400 mt-1">Save this — you'll need it to track your order</p>
             </div>
 
+            {/* Payment reminder */}
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4 text-left">
+              <p className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2">💳 Next Step: Pay Downpayment</p>
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-amber-700">Downpayment (50%)</span>
+                <span className="font-extrabold text-amber-900">
+                  ₱{createdOrder ? getPaymentAmounts(createdOrder.total).downpayment.toFixed(2) : '—'}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-amber-700">Remaining balance (pay before shipping)</span>
+                <span className="font-bold text-amber-900">
+                  ₱{createdOrder ? getPaymentAmounts(createdOrder.total).remaining.toFixed(2) : '—'}
+                </span>
+              </div>
+              <p className="text-xs text-amber-600 mt-2">We'll message you our GCash / Bank Transfer details via Facebook. Production starts once downpayment is confirmed.</p>
+            </div>
+
             <p className="text-stone-500 text-sm mb-6">
-              A confirmation has been sent to <strong className="text-stone-700">{createdOrder?.customer_email}</strong>. We'll also email you as your order progresses.
+              A confirmation has been sent to <strong className="text-stone-700">{createdOrder?.customer_email}</strong>. We'll email you as your order and payment progress.
             </p>
 
             <div className="bg-stone-50 p-4 rounded-xl border border-stone-200 text-left mb-6 text-xs text-stone-600 overflow-auto max-h-40">

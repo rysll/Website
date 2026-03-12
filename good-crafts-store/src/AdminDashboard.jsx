@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useProducts } from './ProductContext';
-import { useOrders, ORDER_STATUSES } from './OrderContext.jsx';
+import { useOrders, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_LABELS, formatOrderId, getPaymentAmounts } from './OrderContext.jsx';
 import { useAuth } from './AuthContext';
 import {
   X, LogOut, LayoutDashboard, Package, ShoppingCart,
   Truck, Archive, AlertTriangle, Search,
   Plus, Minus, RefreshCw, ChevronRight, User, MapPin,
-  Calendar, CheckCircle2, Phone, Mail
+  Calendar, CheckCircle2, Phone, Mail, Banknote, CreditCard, Clock, AlertCircle
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis,
@@ -25,14 +25,6 @@ const categoryData = [
   { cat: 'Wallets', count: 8 },
   { cat: 'Coin Purse', count: 5 },
   { cat: 'Pins', count: 3 },
-];
-
-const MOCK_INVENTORY = [
-  { id: 1, name: 'Leather Keyholder', location: 'Shelf A', qty: 45, lastRestocked: '2026-03-05', low: false },
-  { id: 2, name: 'Leather Wallet', location: 'Shelf A', qty: 23, lastRestocked: '2026-03-08', low: false },
-  { id: 3, name: 'Triangle Coin Purse', location: 'Shelf B', qty: 8, lastRestocked: '2026-03-01', low: true },
-  { id: 4, name: 'Button Pin', location: 'Shelf B', qty: 150, lastRestocked: '2026-03-10', low: false },
-  { id: 5, name: 'Custom Wallet (Large)', location: 'Shelf C', qty: 4, lastRestocked: '2026-02-28', low: true },
 ];
 
 const DELIVERY_STATUSES = ORDER_STATUSES;
@@ -56,17 +48,26 @@ const orderStatusColor = (status) => {
   return 'bg-stone-100 text-stone-600';
 };
 
+const paymentBadgeColor = (ps) => {
+  if (ps === 'fully_paid')           return 'bg-teal-100 text-teal-700';
+  if (ps === 'awaiting_downpayment') return 'bg-amber-100 text-amber-700';
+  if (ps === 'downpayment_paid')     return 'bg-blue-100 text-blue-700';
+  if (ps === 'awaiting_remaining')   return 'bg-orange-100 text-orange-700';
+  return 'bg-stone-100 text-stone-500';
+};
+
 export const AdminDashboard = ({ onClose, onOpenPanel }) => {
   const { products } = useProducts();
-  const { orders, loading, fetchOrders, updateOrderStatus } = useOrders();
+  const { orders, inventory, loading, fetchOrders, updateOrderStatus, updatePaymentStatus, updateInventoryQty, restockInventory } = useOrders();
   const { logout } = useAuth();
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [detailsOrder, setDetailsOrder] = useState(null);
   const [updatingId, setUpdatingId] = useState(null);
-  const [inventory, setInventory] = useState(MOCK_INVENTORY);
   const [searchDelivery, setSearchDelivery] = useState('');
   const [searchInventory, setSearchInventory] = useState('');
+  const [searchOrders, setSearchOrders] = useState('');
+  const [orderFilter, setOrderFilter] = useState('all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
   const [inventoryFilter, setInventoryFilter] = useState('all');
 
@@ -99,28 +100,24 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
   }).length;
 
   const activeDeliveries = orders.filter(o => o.status === 'in transit' || o.status === 'out for delivery').length;
-  const lowStockCount = inventory.filter(i => i.low).length;
+  const lowStockCount = inventory.filter(i => i.qty <= (i.low_threshold ?? 10)).length;
 
   const filteredInventory = inventory.filter(i => {
-    const matchSearch = i.name.toLowerCase().includes(searchInventory.toLowerCase());
-    const matchFilter = inventoryFilter === 'all' || (inventoryFilter === 'low' && i.low) || (inventoryFilter === 'instock' && !i.low);
+    const matchSearch = i.product_name.toLowerCase().includes(searchInventory.toLowerCase());
+    const isLow = i.qty <= (i.low_threshold ?? 10);
+    const matchFilter = inventoryFilter === 'all' || (inventoryFilter === 'low' && isLow) || (inventoryFilter === 'instock' && !isLow);
     return matchSearch && matchFilter;
   });
 
-  const updateInventoryQty = (id, delta) => {
-    setInventory(inv => inv.map(i => {
-      if (i.id !== id) return i;
-      const newQty = Math.max(0, i.qty + delta);
-      return { ...i, qty: newQty, low: newQty < 10 };
-    }));
+  const handleInventoryQtyChange = async (inventoryId, currentQty, delta) => {
+    const newQty = Math.max(0, currentQty + delta);
+    try { await updateInventoryQty(inventoryId, newQty); }
+    catch { alert('Failed to update quantity.'); }
   };
 
-  const restock = (id) => {
-    setInventory(inv => inv.map(i =>
-      i.id === id
-        ? { ...i, qty: i.qty + 50, lastRestocked: new Date().toISOString().split('T')[0], low: false }
-        : i
-    ));
+  const handleRestock = async (inventoryId) => {
+    try { await restockInventory(inventoryId, 50); }
+    catch { alert('Failed to restock.'); }
   };
 
   const navItems = [
@@ -315,74 +312,274 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
           {/* ═══ ORDERS TAB ═══ */}
           {activeTab === 'orders' && (
             <div>
-              <div className="mb-6">
-                <h2 className="text-2xl font-bold text-stone-900">Orders</h2>
-                <p className="text-stone-500 text-sm mt-1">{orders.length} total orders</p>
+              {/* Header */}
+              <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h2 className="text-2xl font-bold text-stone-900">Orders</h2>
+                  <p className="text-stone-500 text-sm mt-1">{orders.length} total orders</p>
+                </div>
+                {/* Search */}
+                <div className="relative">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                  <input
+                    type="text"
+                    placeholder="Search name or order ID..."
+                    value={searchOrders}
+                    onChange={e => setSearchOrders(e.target.value)}
+                    className="pl-8 pr-4 py-2 border border-stone-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-teal-500 outline-none w-56"
+                  />
+                </div>
+              </div>
+
+              {/* Filter Pills */}
+              <div className="flex flex-wrap gap-2 mb-6">
+                {['all', ...ORDER_STATUSES].map(s => {
+                  const count = s === 'all'
+                    ? orders.length
+                    : orders.filter(o => o.status === s).length;
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => setOrderFilter(s)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all capitalize border ${
+                        orderFilter === s
+                          ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                          : 'bg-white text-stone-600 border-stone-200 hover:border-teal-400 hover:text-teal-700'
+                      }`}
+                    >
+                      {s === 'all' ? 'All Orders' : s}
+                      <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${
+                        orderFilter === s ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-500'
+                      }`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
               {loading ? (
                 <div className="bg-white rounded-2xl p-12 text-center text-stone-400 border border-stone-100">Loading orders…</div>
               ) : orders.length === 0 ? (
                 <div className="bg-white rounded-2xl p-12 text-center text-stone-400 border border-stone-100">No orders yet.</div>
-              ) : (
-                <div className="bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-stone-50 border-b border-stone-100">
-                        <th className="text-left p-4 font-semibold text-stone-600">Order #</th>
-                        <th className="text-left p-4 font-semibold text-stone-600">Customer</th>
-                        <th className="text-left p-4 font-semibold text-stone-600">Total</th>
-                        <th className="text-left p-4 font-semibold text-stone-600">Status</th>
-                        <th className="text-left p-4 font-semibold text-stone-600">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {orders.map((o, i) => (
-                        <tr key={o.id} className={`border-b border-stone-50 hover:bg-stone-50 transition-colors ${i === orders.length - 1 ? 'border-0' : ''}`}>
-                          <td className="p-4">
-                            <span className="font-mono text-xs font-bold text-stone-700 bg-stone-100 px-2 py-1 rounded-lg">
-                              #{o.id}
-                            </span>
-                          </td>
-                          <td className="p-4">
-                            <div className="font-medium text-stone-800">{o.customer_name || '–'}</div>
-                            <div className="text-xs text-stone-400">{o.customer_email}</div>
-                          </td>
-                          <td className="p-4 font-bold text-teal-600">
-                            ₱{Number(o.total || 0).toFixed(2)}
-                          </td>
-                          <td className="p-4">
-                            <select
-                              value={o.status}
-                              disabled={updatingId === o.id}
-                              onChange={async e => {
-                                setUpdatingId(o.id);
-                                try { await updateOrderStatus(o.id, e.target.value); }
-                                catch (err) { alert('Failed to update status: ' + err.message); }
-                                finally { setUpdatingId(null); }
-                              }}
-                              className={`text-xs border border-stone-200 rounded-lg px-2 py-1.5 bg-white focus:ring-2 focus:ring-teal-500 outline-none capitalize ${updatingId === o.id ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            >
-                              {ORDER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                            {updatingId === o.id && (
-                              <span className="text-xs text-stone-400 ml-1">saving…</span>
-                            )}
-                          </td>
-                          <td className="p-4">
-                            <button
-                              onClick={() => setDetailsOrder(o)}
-                              className="text-teal-600 text-xs font-semibold hover:text-teal-800 flex items-center gap-1"
-                            >
-                              Details <ChevronRight size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              ) : (() => {
+                // Apply filter + search
+                const filtered = orders.filter(o => {
+                  const matchFilter = orderFilter === 'all' || o.status === orderFilter;
+                  const matchSearch = !searchOrders ||
+                    (o.customer_name || '').toLowerCase().includes(searchOrders.toLowerCase()) ||
+                    (o.customer_email || '').toLowerCase().includes(searchOrders.toLowerCase()) ||
+                    (o.order_number || '').toLowerCase().includes(searchOrders.toLowerCase()) ||
+                    String(o.id).includes(searchOrders);
+                  return matchFilter && matchSearch;
+                });
+
+                const activeOrders = filtered.filter(o => o.status !== 'delivered');
+                const completedOrders = filtered.filter(o => o.status === 'delivered');
+
+                const PaymentAction = ({ o }) => {
+                  const ps = o.payment_status || 'awaiting_downpayment';
+                  const { downpayment, remaining } = getPaymentAmounts(o.total);
+                  const isUpdating = updatingId === o.id;
+
+                  if (ps === 'fully_paid') {
+                    return (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 bg-teal-50 px-2.5 py-1.5 rounded-full border border-teal-200">
+                        <CheckCircle2 size={11} /> Fully Paid
+                      </span>
+                    );
+                  }
+                  if (ps === 'awaiting_downpayment') {
+                    return (
+                      <div className="space-y-1">
+                        <div className="text-xs text-amber-700 font-semibold flex items-center gap-1">
+                          <Clock size={11} /> Waiting downpayment
+                        </div>
+                        <div className="text-xs text-stone-500">Due: <span className="font-bold text-stone-700">₱{downpayment.toFixed(2)}</span></div>
+                        <button
+                          disabled={isUpdating}
+                          onClick={async () => {
+                            setUpdatingId(o.id);
+                            try { await updatePaymentStatus(o.id, 'downpayment_paid'); }
+                            catch (err) { alert(err.message); }
+                            finally { setUpdatingId(null); }
+                          }}
+                          className="text-xs bg-amber-500 hover:bg-amber-600 text-white font-semibold px-2.5 py-1 rounded-lg disabled:opacity-50"
+                        >
+                          {isUpdating ? 'Saving…' : '✓ Mark Paid'}
+                        </button>
+                      </div>
+                    );
+                  }
+                  if (ps === 'downpayment_paid') {
+                    return (
+                      <div className="space-y-1">
+                        <div className="text-xs text-blue-700 font-semibold flex items-center gap-1">
+                          <Banknote size={11} /> Downpayment received
+                        </div>
+                        <div className="text-xs text-stone-500">Remaining: <span className="font-bold text-stone-700">₱{remaining.toFixed(2)}</span></div>
+                        <button
+                          disabled={isUpdating}
+                          onClick={async () => {
+                            setUpdatingId(o.id);
+                            try { await updatePaymentStatus(o.id, 'awaiting_remaining'); }
+                            catch (err) { alert(err.message); }
+                            finally { setUpdatingId(null); }
+                          }}
+                          className="text-xs bg-orange-500 hover:bg-orange-600 text-white font-semibold px-2.5 py-1 rounded-lg disabled:opacity-50"
+                        >
+                          {isUpdating ? 'Saving…' : 'Request Balance'}
+                        </button>
+                      </div>
+                    );
+                  }
+                  if (ps === 'awaiting_remaining') {
+                    return (
+                      <div className="space-y-1">
+                        <div className="text-xs text-orange-700 font-semibold flex items-center gap-1">
+                          <AlertCircle size={11} /> Waiting remaining balance
+                        </div>
+                        <div className="text-xs text-stone-500">Due: <span className="font-bold text-stone-700">₱{remaining.toFixed(2)}</span></div>
+                        <button
+                          disabled={isUpdating}
+                          onClick={async () => {
+                            setUpdatingId(o.id);
+                            try { await updatePaymentStatus(o.id, 'fully_paid'); }
+                            catch (err) { alert(err.message); }
+                            finally { setUpdatingId(null); }
+                          }}
+                          className="text-xs bg-teal-600 hover:bg-teal-700 text-white font-semibold px-2.5 py-1 rounded-lg disabled:opacity-50"
+                        >
+                          {isUpdating ? 'Saving…' : '✓ Mark Fully Paid'}
+                        </button>
+                      </div>
+                    );
+                  }
+                  return null;
+                };
+
+                const OrderRow = ({ o, i, total }) => (
+                  <tr key={o.id} className={`border-b border-stone-50 hover:bg-stone-50 transition-colors ${i === total - 1 ? 'border-0' : ''}`}>
+                    <td className="p-4">
+                      <span className="font-mono text-xs font-bold text-stone-700 bg-stone-100 px-2 py-1 rounded-lg">
+                        {o.order_number || formatOrderId(o.id)}
+                      </span>
+                      <div className="text-xs text-stone-400 mt-1">
+                        {o.created_at ? new Date(o.created_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <div className="font-medium text-stone-800">{o.customer_name || '–'}</div>
+                      <div className="text-xs text-stone-400">{o.customer_email}</div>
+                    </td>
+                    <td className="p-4">
+                      <div className="font-bold text-teal-600">₱{Number(o.total || 0).toFixed(2)}</div>
+                      <div className="text-xs text-stone-400 mt-0.5">
+                        DP: ₱{getPaymentAmounts(o.total).downpayment.toFixed(2)}
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      {o.status === 'delivered' ? (
+                        <span className="inline-flex items-center gap-1.5 bg-teal-100 text-teal-700 text-xs font-semibold px-2.5 py-1.5 rounded-full">
+                          <CheckCircle2 size={12} /> Delivered
+                        </span>
+                      ) : (
+                        <div className="flex flex-col gap-1.5">
+                          <select
+                            value={o.status}
+                            disabled={updatingId === o.id}
+                            onChange={async e => {
+                              setUpdatingId(o.id);
+                              try { await updateOrderStatus(o.id, e.target.value); }
+                              catch (err) { alert(err.message); }
+                              finally { setUpdatingId(null); }
+                            }}
+                            className={`text-xs border border-stone-200 rounded-lg px-2 py-1.5 bg-white focus:ring-2 focus:ring-teal-500 outline-none capitalize ${updatingId === o.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          >
+                            {ORDER_STATUSES.map(s => (
+                              <option key={s} value={s} disabled={s === 'in transit' && o.payment_status !== 'fully_paid'}>
+                                {s}{s === 'in transit' && o.payment_status !== 'fully_paid' ? ' 🔒' : ''}
+                              </option>
+                            ))}
+                          </select>
+                          <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${paymentBadgeColor(o.payment_status)}`}>
+                            <CreditCard size={10} />
+                            {PAYMENT_LABELS[o.payment_status] || o.payment_status || 'Unknown'}
+                          </span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-4">
+                      <PaymentAction o={o} />
+                    </td>
+                    <td className="p-4">
+                      <button
+                        onClick={() => setDetailsOrder(o)}
+                        className="text-teal-600 text-xs font-semibold hover:text-teal-800 flex items-center gap-1"
+                      >
+                        Details <ChevronRight size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+
+                const TableHeaders = ({ teal = false }) => (
+                  <tr className={teal ? 'bg-teal-50 border-b border-teal-100' : 'bg-stone-50 border-b border-stone-100'}>
+                    {['Order #', 'Customer', 'Total', 'Status', 'Payment', 'Actions'].map(h => (
+                      <th key={h} className={`text-left p-4 font-semibold text-sm ${teal ? 'text-teal-700' : 'text-stone-600'}`}>{h}</th>
+                    ))}
+                  </tr>
+                );
+
+                return (
+                  <div className="space-y-6">
+                    {/* Active Orders */}
+                    {(orderFilter === 'all' || orderFilter !== 'delivered') && activeOrders.length > 0 && (
+                      <div>
+                        {orderFilter === 'all' && (
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-sm font-bold text-stone-700">Active Orders</span>
+                            <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2 py-0.5 rounded-full">{activeOrders.length}</span>
+                          </div>
+                        )}
+                        <div className="bg-white rounded-2xl border border-stone-100 shadow-sm overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead><TableHeaders /></thead>
+                            <tbody>
+                              {activeOrders.map((o, i) => <OrderRow key={o.id} o={o} i={i} total={activeOrders.length} />)}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Completed Orders */}
+                    {(orderFilter === 'all' || orderFilter === 'delivered') && completedOrders.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="text-sm font-bold text-stone-700">Completed Orders</span>
+                          <span className="bg-teal-100 text-teal-700 text-xs font-bold px-2 py-0.5 rounded-full">{completedOrders.length}</span>
+                        </div>
+                        <div className="bg-white rounded-2xl border border-teal-100 shadow-sm overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead><TableHeaders teal /></thead>
+                            <tbody>
+                              {completedOrders.map((o, i) => <OrderRow key={o.id} o={o} i={i} total={completedOrders.length} />)}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* No results */}
+                    {filtered.length === 0 && (
+                      <div className="bg-white rounded-2xl p-12 text-center text-stone-400 border border-stone-100">
+                        No orders match your filter.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -431,7 +628,9 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                     <div key={o.id} className="bg-white rounded-2xl border border-stone-100 shadow-sm p-6">
                       <div className="flex items-center justify-between mb-3">
                         <div>
-                          <span className="font-bold text-stone-900 font-mono">#{o.id}</span>
+                          <span className="font-bold text-stone-900 font-mono">
+                        {o.order_number || formatOrderId(o.id)}
+                      </span>
                           <span className="text-xs text-stone-400 ml-2">
                             {o.created_at ? new Date(o.created_at).toLocaleDateString('en-PH') : ''}
                           </span>
@@ -495,7 +694,7 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                 {[
                   { label: 'Total Items', value: inventory.reduce((s, i) => s + i.qty, 0), icon: Package, iconColor: 'text-blue-500', iconBg: 'bg-blue-50' },
                   { label: 'Products Tracked', value: inventory.length, icon: Archive, iconColor: 'text-teal-600', iconBg: 'bg-teal-50' },
-                  { label: 'Low Stock Alerts', value: inventory.filter(i => i.low).length, icon: AlertTriangle, iconColor: 'text-red-500', iconBg: 'bg-red-50' },
+                  { label: 'Low Stock Alerts', value: lowStockCount, icon: AlertTriangle, iconColor: 'text-red-500', iconBg: 'bg-red-50' },
                 ].map(({ label, value, icon: Icon, iconColor, iconBg }) => (
                   <div key={label} className="bg-white rounded-2xl p-5 border border-stone-100 shadow-sm flex items-center gap-4">
                     <div className={`w-12 h-12 ${iconBg} rounded-xl flex items-center justify-center shrink-0`}>
@@ -541,38 +740,55 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredInventory.map((item, i) => (
-                      <tr key={item.id} className={`border-b border-stone-50 hover:bg-stone-50 transition-colors ${i === filteredInventory.length - 1 ? 'border-0' : ''}`}>
-                        <td className="p-4">
-                          <div className="font-semibold text-stone-800">{item.name}</div>
-                          <div className="text-xs text-stone-400">ID: {item.id}</div>
-                        </td>
-                        <td className="p-4 text-stone-600">{item.location}</td>
-                        <td className="p-4 font-bold text-stone-900">{item.qty}</td>
-                        <td className="p-4 text-stone-500 text-xs">{item.lastRestocked}</td>
-                        <td className="p-4">
-                          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${item.low ? 'bg-red-100 text-red-600' : 'bg-teal-100 text-teal-700'}`}>
-                            {item.low ? 'Low Stock' : 'In Stock'}
-                          </span>
-                        </td>
-                        <td className="p-4">
-                          <div className="flex items-center gap-2">
-                            <button onClick={() => updateInventoryQty(item.id, -1)} className="w-7 h-7 border border-stone-200 rounded-lg flex items-center justify-center hover:bg-stone-100 transition-colors">
-                              <Minus size={12} className="text-stone-600" />
-                            </button>
-                            <button onClick={() => updateInventoryQty(item.id, 1)} className="w-7 h-7 border border-stone-200 rounded-lg flex items-center justify-center hover:bg-stone-100 transition-colors">
-                              <Plus size={12} className="text-stone-600" />
-                            </button>
-                            <button onClick={() => restock(item.id)} className="flex items-center gap-1.5 bg-teal-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-teal-700 transition-colors">
-                              <RefreshCw size={11} /> Restock
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredInventory.length === 0 && (
-                      <tr><td colSpan={6} className="p-12 text-center text-stone-400">No items found.</td></tr>
-                    )}
+                    {filteredInventory.length === 0 ? (
+                      <tr><td colSpan={6} className="p-12 text-center text-stone-400">
+                        {inventory.length === 0 ? 'No inventory yet. Run the SQL setup to seed inventory.' : 'No items match your search.'}
+                      </td></tr>
+                    ) : filteredInventory.map((item, i) => {
+                      const isLow = item.qty <= (item.low_threshold ?? 10);
+                      return (
+                        <tr key={item.id} className={`border-b border-stone-50 hover:bg-stone-50 transition-colors ${i === filteredInventory.length - 1 ? 'border-0' : ''}`}>
+                          <td className="p-4">
+                            <div className="font-semibold text-stone-800">{item.product_name}</div>
+                            <div className="text-xs text-stone-400">Product ID: {item.product_id}</div>
+                          </td>
+                          <td className="p-4 text-stone-600">{item.location || 'Main Storage'}</td>
+                          <td className="p-4">
+                            <span className={`text-lg font-bold ${isLow ? 'text-red-600' : 'text-stone-900'}`}>
+                              {item.qty}
+                            </span>
+                          </td>
+                          <td className="p-4 text-stone-500 text-xs">{item.last_restocked || '—'}</td>
+                          <td className="p-4">
+                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${isLow ? 'bg-red-100 text-red-600' : 'bg-teal-100 text-teal-700'}`}>
+                              {isLow ? 'Low Stock' : 'In Stock'}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleInventoryQtyChange(item.id, item.qty, -1)}
+                                className="w-7 h-7 border border-stone-200 rounded-lg flex items-center justify-center hover:bg-stone-100 transition-colors"
+                              >
+                                <Minus size={12} className="text-stone-600" />
+                              </button>
+                              <button
+                                onClick={() => handleInventoryQtyChange(item.id, item.qty, 1)}
+                                className="w-7 h-7 border border-stone-200 rounded-lg flex items-center justify-center hover:bg-stone-100 transition-colors"
+                              >
+                                <Plus size={12} className="text-stone-600" />
+                              </button>
+                              <button
+                                onClick={() => handleRestock(item.id)}
+                                className="flex items-center gap-1.5 bg-teal-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-teal-700 transition-colors"
+                              >
+                                <RefreshCw size={11} /> +50
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -587,7 +803,9 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
             <div className="flex items-center justify-between mb-4">
-              <h4 className="text-lg font-bold text-stone-900">Order {detailsOrder.id}</h4>
+              <h4 className="text-lg font-bold text-stone-900">
+                Order {detailsOrder.order_number || formatOrderId(detailsOrder.id)}
+              </h4>
               <button onClick={() => setDetailsOrder(null)} className="p-2 hover:bg-stone-100 rounded-full">
                 <X size={18} className="text-stone-500" />
               </button>
