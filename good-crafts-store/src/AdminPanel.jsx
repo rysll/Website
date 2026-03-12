@@ -107,13 +107,34 @@ const ImageUploadZone = ({ images, onChange, productName }) => {
   const maxSizeMB     = 5;
 
   const processFiles = async (files) => {
-    setError('');
-    const valid = Array.from(files).filter(f => {
-      if (!acceptedTypes.includes(f.type)) { setError('Only JPG, PNG, WEBP, GIF allowed.'); return false; }
-      if (f.size > maxSizeMB * 1024 * 1024) { setError(`Max file size is ${maxSizeMB}MB.`); return false; }
+    // Validate files first before clearing error state
+    const fileArray = Array.from(files);
+    const validationErrors = [];
+    
+    const valid = fileArray.filter(f => {
+      if (!acceptedTypes.includes(f.type)) { 
+        validationErrors.push(`${f.name}: Only JPG, PNG, WEBP, GIF allowed.`); 
+        return false; 
+      }
+      if (f.size > maxSizeMB * 1024 * 1024) { 
+        validationErrors.push(`${f.name}: Max file size is ${maxSizeMB}MB.`); 
+        return false; 
+      }
       return true;
     });
-    if (valid.length === 0) return;
+
+    // Set validation errors if any
+    if (validationErrors.length > 0) {
+      setError(validationErrors[0]); // Show first error
+      return;
+    }
+
+    if (valid.length === 0) {
+      setError('No valid files to upload.');
+      return;
+    }
+
+    setError(''); // Clear error only if we have valid files
 
     // Add placeholder slots while uploading (use functional updater to avoid stale closure)
     const placeholders = valid.map((_, i) => `__uploading__${Date.now()}_${i}`);
@@ -131,6 +152,7 @@ const ImageUploadZone = ({ images, onChange, productName }) => {
         });
         return next;
       });
+      setError(''); // Clear any previous errors on success
     } catch (err) {
       console.error('Upload error:', err);
       setError('Upload failed: ' + (err.message || 'Unknown error'));
