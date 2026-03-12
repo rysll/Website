@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, X, Plus, Minus, Menu, Trash2, Check, ExternalLink, Key, Wallet, Coins, Heart, Star, Instagram, Facebook, Settings, Package } from 'lucide-react';
-import { useOrders, ORDER_STATUSES, getPaymentAmounts, DOWNPAYMENT_RATE } from './OrderContext.jsx';
+import { ShoppingCart, X, Plus, Minus, Menu, Trash2, Check, ExternalLink, Key, Wallet, Coins, Heart, Star, Instagram, Facebook, Settings, Package, ChevronLeft, ChevronRight } from 'lucide-react';
 import logo from './assets/GoodCraftslogo.jpg';
 import { useProducts } from './ProductContext';
 import { useAuth } from './AuthContext';
@@ -8,6 +7,7 @@ import { AdminPanel } from './AdminPanel';
 import { AdminLogin } from './AdminLogin';
 import { AdminDashboard } from './AdminDashboard';
 import { OrderTracker } from './OrderTracker';
+import { useOrders } from './OrderContext';
 
 // ── Product Modal Image Slider ────────────────────────────────────────────────
 const ProductModalSlider = ({ images, productName }) => {
@@ -569,12 +569,6 @@ const App = () => {
             <p className="text-sm">Taytay, Rizal, Philippines</p>
           </div>
           <div className="flex gap-4 items-center">
-            <button
-              onClick={() => setIsTrackerOpen(true)}
-              className="text-sm text-stone-400 hover:text-white transition-colors flex items-center gap-1.5"
-            >
-              <Package size={14} /> Track Order
-            </button>
             <a href="https://www.facebook.com/profile.php?id=61561955998791" className="p-2 bg-stone-800 rounded-full hover:bg-stone-700 hover:text-white transition-colors">
               <Facebook size={20} />
             </a>

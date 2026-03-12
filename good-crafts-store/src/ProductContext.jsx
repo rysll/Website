@@ -7,7 +7,6 @@ const ProductContext = createContext();
 // Function to get icon component by name
 const getIcon = (iconName) => {
   try {
-    // Get the icon from lucide-react by name
     const IconComponent = LucideIcons[iconName];
     if (IconComponent) {
       return <IconComponent size={48} className="text-amber-100" />;
@@ -15,7 +14,6 @@ const getIcon = (iconName) => {
   } catch (error) {
     console.warn(`Icon "${iconName}" not found`);
   }
-  // Fallback to Key icon if not found
   return <LucideIcons.Key size={48} className="text-amber-100" />;
 };
 
@@ -24,7 +22,6 @@ export const ProductProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Fetch products from Supabase
   const fetchProducts = async () => {
     try {
       setLoading(true);
@@ -44,11 +41,9 @@ export const ProductProvider = ({ children }) => {
     }
   };
 
-  // Fetch on mount
   useEffect(() => {
     fetchProducts();
 
-    // Subscribe to real-time changes
     const subscription = supabase
       .channel('products-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
@@ -61,7 +56,6 @@ export const ProductProvider = ({ children }) => {
     };
   }, []);
 
-  // Add product
   const addProduct = async (newProduct) => {
     try {
       const { data, error: addError } = await supabase
@@ -79,7 +73,6 @@ export const ProductProvider = ({ children }) => {
     }
   };
 
-  // Update product
   const updateProduct = async (id, updatedProduct) => {
     try {
       const { data, error: updateError } = await supabase
@@ -98,7 +91,6 @@ export const ProductProvider = ({ children }) => {
     }
   };
 
-  // Delete product
   const deleteProduct = async (id) => {
     try {
       const { error: deleteError } = await supabase
@@ -115,17 +107,26 @@ export const ProductProvider = ({ children }) => {
     }
   };
 
-  // Get products with icons
+  // Get products with icons — variants come from the DB, not hardcoded
   const getProductsWithIcons = () => {
-    return products.map(product => ({
-      ...product,
-      icon: getIcon(product.iconName),
-      variants: [
-        { id: 'plain', name: 'Plain (No Name)', priceMod: 0 },
-        { id: 'stamp', name: 'Heatstamped Name', priceMod: 15 },
-        { id: 'laser', name: 'Laser Engraved', priceMod: 20 },
-      ],
-    }));
+    return products.map(product => {
+      // Parse variants from DB (stored as JSONB)
+      let variants = product.variants;
+      if (typeof variants === 'string') {
+        try { variants = JSON.parse(variants); } catch { variants = null; }
+      }
+      // If no variants set in DB, show a single "Standard" option so the
+      // product modal still works — admin can add proper types via the panel
+      if (!Array.isArray(variants) || variants.length === 0) {
+        variants = [{ id: 'std', name: 'Standard', priceMod: 0 }];
+      }
+
+      return {
+        ...product,
+        icon: getIcon(product.iconName),
+        variants,
+      };
+    });
   };
 
   return (
@@ -137,6 +138,7 @@ export const ProductProvider = ({ children }) => {
       updateProduct,
       deleteProduct,
       getProductsWithIcons,
+      fetchProducts,        // ← used by AdminPanel
       refetchProducts: fetchProducts,
     }}>
       {children}

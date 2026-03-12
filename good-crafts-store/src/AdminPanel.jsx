@@ -26,22 +26,37 @@ const categoryLabel = (key) => {
 
 // ─── Upload a single File object to Supabase Storage ──────────────────────────
 async function uploadFile(file, productName) {
+  console.log('[Upload] Starting upload:', file.name, file.type, file.size);
   const ext  = file.name.split('.').pop().toLowerCase();
   const safe = productName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 40);
   const path = `${safe}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  console.log('[Upload] Path:', path, '| Bucket:', BUCKET);
 
-  const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
-    cacheControl: '3600',
-    upsert: false,
-    contentType: file.type || 'image/jpeg',
-  });
+  const { data: uploadData, error } = await supabase.storage
+    .from(BUCKET)
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || 'image/jpeg',
+    });
+
   if (error) {
-    // Surface the real Supabase Storage error message
+    console.error('[Upload] FAILED:', JSON.stringify(error, null, 2));
     throw new Error(error.message || error.error || JSON.stringify(error));
   }
 
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-  return data.publicUrl;
+  console.log('[Upload] Success:', uploadData);
+
+  // Try getPublicUrl first
+  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  console.log('[Upload] urlData:', urlData);
+
+  // If getPublicUrl fails, build the URL manually from supabase client
+  const publicUrl = urlData?.publicUrl
+    || `${supabase.supabaseUrl}/storage/v1/object/public/${BUCKET}/${path}`;
+
+  console.log('[Upload] Final public URL:', publicUrl);
+  return publicUrl;
 }
 
 // ─── Image Slider ─────────────────────────────────────────────────────────────
@@ -96,36 +111,33 @@ const ImageSlider = ({ images = [], productName = '', height = 'h-44' }) => {
 };
 
 // ─── Image Upload Zone ─────────────────────────────────────────────────────────
-// Handles: click-to-browse, drag-and-drop, preview grid, reorder, delete
 const ImageUploadZone = ({ images, onChange, productName }) => {
   const inputRef  = useRef(null);
   const [draggingOver, setDraggingOver] = useState(false);
-  const [uploading, setUploading]       = useState([]);  // indices being uploaded
+  const [uploading, setUploading]       = useState([]);
   const [error, setError]               = useState('');
 
   const acceptedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
   const maxSizeMB     = 5;
 
   const processFiles = async (files) => {
-    // Validate files first before clearing error state
     const fileArray = Array.from(files);
     const validationErrors = [];
-    
+
     const valid = fileArray.filter(f => {
-      if (!acceptedTypes.includes(f.type)) { 
-        validationErrors.push(`${f.name}: Only JPG, PNG, WEBP, GIF allowed.`); 
-        return false; 
+      if (!acceptedTypes.includes(f.type)) {
+        validationErrors.push(`${f.name}: Only JPG, PNG, WEBP, GIF allowed.`);
+        return false;
       }
-      if (f.size > maxSizeMB * 1024 * 1024) { 
-        validationErrors.push(`${f.name}: Max file size is ${maxSizeMB}MB.`); 
-        return false; 
+      if (f.size > maxSizeMB * 1024 * 1024) {
+        validationErrors.push(`${f.name}: Max file size is ${maxSizeMB}MB.`);
+        return false;
       }
       return true;
     });
 
-    // Set validation errors if any
     if (validationErrors.length > 0) {
-      setError(validationErrors[0]); // Show first error
+      setError(validationErrors[0]);
       return;
     }
 
@@ -134,16 +146,16 @@ const ImageUploadZone = ({ images, onChange, productName }) => {
       return;
     }
 
-    setError(''); // Clear error only if we have valid files
+    setError('');
 
-    // Add placeholder slots while uploading (use functional updater to avoid stale closure)
     const placeholders = valid.map((_, i) => `__uploading__${Date.now()}_${i}`);
     onChange(prev => [...(Array.isArray(prev) ? prev : []), ...placeholders]);
     setUploading(placeholders);
 
     try {
+      console.log('[Upload] Uploading', valid.length, 'file(s)...');
       const urls = await Promise.all(valid.map(f => uploadFile(f, productName || 'product')));
-      // Replace placeholders with real URLs
+      console.log('[Upload] All URLs:', urls);
       onChange(prev => {
         const next = [...prev];
         placeholders.forEach((ph, i) => {
@@ -152,11 +164,10 @@ const ImageUploadZone = ({ images, onChange, productName }) => {
         });
         return next;
       });
-      setError(''); // Clear any previous errors on success
+      setError('');
     } catch (err) {
-      console.error('Upload error:', err);
+      console.error('[Upload] processFiles error:', err);
       setError('Upload failed: ' + (err.message || 'Unknown error'));
-      // Remove placeholders on failure
       onChange(prev => prev.filter(u => !placeholders.includes(u)));
     } finally {
       setUploading([]);
@@ -169,7 +180,6 @@ const ImageUploadZone = ({ images, onChange, productName }) => {
     processFiles(e.dataTransfer.files);
   };
 
-  // Reset file input after each selection so same file can be re-picked
   const handleInputChange = (e) => {
     processFiles(e.target.files);
     e.target.value = '';
@@ -227,7 +237,10 @@ const ImageUploadZone = ({ images, onChange, productName }) => {
       </div>
 
       {error && (
-        <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12} /> {error}</p>
+        <div className="bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2 rounded-xl flex items-start gap-2">
+          <AlertCircle size={13} className="mt-0.5 shrink-0" />
+          <span>{error}</span>
+        </div>
       )}
 
       {/* Image preview grid */}
@@ -245,14 +258,12 @@ const ImageUploadZone = ({ images, onChange, productName }) => {
                   <img src={url} alt={`Product ${i + 1}`} className="w-full h-full object-cover" />
                 )}
 
-                {/* First image badge */}
                 {i === 0 && !isLoading && (
                   <div className="absolute top-1 left-1 bg-teal-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
                     Main
                   </div>
                 )}
 
-                {/* Controls overlay */}
                 {!isLoading && (
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center gap-1.5 opacity-0 group-hover:opacity-100">
                     {i > 0 && (
@@ -283,7 +294,6 @@ const ImageUploadZone = ({ images, onChange, productName }) => {
                   </div>
                 )}
 
-                {/* Image number */}
                 {!isLoading && images.length > 1 && (
                   <div className="absolute bottom-1 right-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded-full">
                     {i + 1}
@@ -302,6 +312,81 @@ const ImageUploadZone = ({ images, onChange, productName }) => {
   );
 };
 
+// ─── Variants Editor ─────────────────────────────────────────────────────────
+const VariantsEditor = ({ variants, onChange }) => {
+  const addVariant = () => {
+    const newVariant = { id: `v_${Date.now()}`, name: '', priceMod: 0 };
+    onChange([...variants, newVariant]);
+  };
+
+  const updateVariant = (idx, field, value) => {
+    const updated = variants.map((v, i) =>
+      i === idx ? { ...v, [field]: field === 'priceMod' ? Number(value) : value } : v
+    );
+    onChange(updated);
+  };
+
+  const removeVariant = (idx) => {
+    onChange(variants.filter((_, i) => i !== idx));
+  };
+
+  return (
+    <div className="space-y-2">
+      {variants.length === 0 && (
+        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+          ⚠️ No types added yet. Customers won't see any options to select.
+        </p>
+      )}
+
+      {variants.map((v, i) => (
+        <div key={v.id || i} className="flex items-center gap-2 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2">
+          {/* Type name */}
+          <input
+            type="text"
+            value={v.name}
+            onChange={e => updateVariant(i, 'name', e.target.value)}
+            placeholder="e.g. Plain (No Name)"
+            className="flex-1 bg-transparent text-sm outline-none text-stone-700 placeholder:text-stone-300"
+          />
+          {/* Price modifier */}
+          <div className="flex items-center gap-1 shrink-0">
+            <span className="text-xs text-stone-400">+₱</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={v.priceMod}
+              onChange={e => updateVariant(i, 'priceMod', e.target.value)}
+              className="w-16 bg-white border border-stone-200 rounded-lg px-2 py-1 text-sm text-right outline-none focus:ring-1 focus:ring-teal-400"
+            />
+          </div>
+          {/* Remove */}
+          <button
+            onClick={() => removeVariant(i)}
+            className="text-stone-300 hover:text-red-500 transition-colors shrink-0"
+            title="Remove type"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      ))}
+
+      <button
+        onClick={addVariant}
+        className="w-full flex items-center justify-center gap-1.5 py-2 border border-dashed border-teal-300 text-teal-600 rounded-xl text-xs font-semibold hover:bg-teal-50 transition-colors"
+      >
+        <Plus size={13} /> Add Type
+      </button>
+
+      {variants.length > 0 && (
+        <p className="text-xs text-stone-400">
+          Set price modifier to <strong>0</strong> for included types (e.g. "Plain"). First type is selected by default.
+        </p>
+      )}
+    </div>
+  );
+};
+
 // ─── Edit Product Modal ───────────────────────────────────────────────────────
 const EditProductModal = ({ product, onClose, onSaved }) => {
   const [form, setForm] = useState({
@@ -309,11 +394,8 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
     description: product.description || '',
     basePrice:   product.basePrice   || 0,
     minOrder:    product.minOrder    || 1,
-    // colors is TEXT in DB — stored as comma-separated string e.g. "Tan, Red, Black"
-    // Strip any accidental JSON brackets if old data was saved as array string
     colors: (() => {
       const raw = product.colors || '';
-      // If it looks like a JSON array string ["Tan","Red"] → parse and rejoin cleanly
       if (raw.trim().startsWith('[')) {
         try {
           const parsed = JSON.parse(raw);
@@ -324,14 +406,18 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
     })(),
     category:    product.category || '',
     imageUrls: (() => {
-      // image_urls is JSONB — Supabase returns it as a parsed array
       let urls = product.image_urls;
-      // Safety: handle if it somehow comes back as a JSON string
       if (typeof urls === 'string') {
         try { urls = JSON.parse(urls); } catch { urls = null; }
       }
       if (Array.isArray(urls) && urls.length > 0) return urls;
       if (product.image_url) return [product.image_url];
+      return [];
+    })(),
+    variants: (() => {
+      let v = product.variants;
+      if (typeof v === 'string') { try { v = JSON.parse(v); } catch { v = null; } }
+      if (Array.isArray(v) && v.length > 0) return v;
       return [];
     })(),
   });
@@ -340,8 +426,6 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
   const [error,  setError]  = useState('');
 
   const setField = (key, val) => setForm(f => ({ ...f, [key]: val }));
-
-  // Check if any uploads are still pending
   const hasUploading = form.imageUrls.some(u => u.startsWith('__uploading__'));
 
   const handleSave = async () => {
@@ -351,19 +435,20 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
     setError('');
     try {
       const imageUrls = form.imageUrls.filter(u => u && !u.startsWith('__uploading__'));
+      console.log('[Save] imageUrls to save:', imageUrls);
       const updatePayload = {
         name:        form.name.trim(),
         description: form.description.trim(),
         basePrice:   Number(form.basePrice),
         minOrder:    Number(form.minOrder),
-        // colors is TEXT in DB — save as clean comma-separated string
-        colors:     form.colors.split(',').map(c => c.trim()).filter(Boolean).join(', '),
-        image_url:  imageUrls[0] || null,
-        // image_urls is JSONB — pass JS array directly, Supabase handles serialization
-        image_urls: imageUrls.length > 0 ? imageUrls : null,
+        colors:      form.colors.split(',').map(c => c.trim()).filter(Boolean).join(', '),
+        image_url:   imageUrls[0] || null,
+        image_urls:  imageUrls.length > 0 ? imageUrls : null,
         category:    form.category || null,
+        variants:    form.variants.length > 0 ? form.variants : null,
         updated_at:  new Date().toISOString(),
       };
+      console.log('[Save] Payload:', updatePayload);
 
       const { data, error: supaErr } = await supabase
         .from('products')
@@ -373,6 +458,7 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
         .single();
 
       if (supaErr) {
+        console.error('[Save] Supabase error:', JSON.stringify(supaErr, null, 2));
         throw new Error(
           supaErr.message
             ? `DB error: ${supaErr.message}${supaErr.details ? ` — ${supaErr.details}` : ''}`
@@ -380,10 +466,11 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
         );
       }
 
+      console.log('[Save] Saved successfully:', data);
       setSaved(true);
       setTimeout(() => onSaved(data), 600);
     } catch (err) {
-      console.error('Update failed:', err);
+      console.error('[Save] handleSave error:', err);
       setError(err.message || 'Failed to save. Please try again.');
     } finally {
       setSaving(false);
@@ -442,7 +529,6 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
               className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-teal-500 outline-none" />
           </div>
 
-          {/* Category */}
           <div>
             <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">Category</label>
             <select
@@ -457,7 +543,17 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
             </select>
           </div>
 
-          {/* Image Upload */}
+          <div>
+            <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-2">
+              Product Types <span className="text-stone-400 normal-case font-normal ml-1">(shown as "Select Type" on product page)</span>
+              <span className="ml-1 text-stone-400 normal-case font-normal">— {form.variants.length} type{form.variants.length !== 1 ? 's' : ''}</span>
+            </label>
+            <VariantsEditor
+              variants={form.variants}
+              onChange={v => setField('variants', v)}
+            />
+          </div>
+
           <div>
             <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-2">
               Product Photos
@@ -467,7 +563,13 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
             </label>
             <ImageUploadZone
               images={form.imageUrls}
-              onChange={val => setField('imageUrls', typeof val === 'function' ? val(form.imageUrls) : val)}
+              onChange={newVal => {
+                if (typeof newVal === 'function') {
+                  setForm(f => ({ ...f, imageUrls: newVal(f.imageUrls) }));
+                } else {
+                  setField('imageUrls', newVal);
+                }
+              }}
               productName={form.name}
             />
           </div>
@@ -503,7 +605,7 @@ const EditProductModal = ({ product, onClose, onSaved }) => {
 // ─── Add Product Modal ────────────────────────────────────────────────────────
 const AddProductModal = ({ onClose, onAdded }) => {
   const [form, setForm] = useState({
-    name: '', description: '', basePrice: '', minOrder: 1, colors: '', category: '', imageUrls: [],
+    name: '', description: '', basePrice: '', minOrder: 1, colors: '', category: '', imageUrls: [], variants: [],
   });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState('');
@@ -518,25 +620,39 @@ const AddProductModal = ({ onClose, onAdded }) => {
     setSaving(true); setError('');
     try {
       const imageUrls = form.imageUrls.filter(u => u && !u.startsWith('__uploading__'));
-      const { data, error: supaErr } = await supabase.from('products').insert([{
+      console.log('[AddProduct] imageUrls:', imageUrls);
+      const payload = {
         name:        form.name.trim(),
         description: form.description.trim(),
         basePrice:   Number(form.basePrice),
         minOrder:    Number(form.minOrder) || 1,
-        colors:     form.colors.split(',').map(c => c.trim()).filter(Boolean).join(', '),
-        image_url:  imageUrls[0] || null,
-        image_urls: imageUrls.length > 0 ? imageUrls : null,
-        category:   form.category || null,
-      }]).select().single();
+        colors:      form.colors.split(',').map(c => c.trim()).filter(Boolean).join(', '),
+        image_url:   imageUrls[0] || null,
+        image_urls:  imageUrls.length > 0 ? imageUrls : null,
+        category:    form.category || null,
+        variants:    form.variants.length > 0 ? form.variants : null,
+      };
+      console.log('[AddProduct] Payload:', payload);
+
+      const { data, error: supaErr } = await supabase
+        .from('products')
+        .insert([payload])
+        .select()
+        .single();
+
       if (supaErr) {
+        console.error('[AddProduct] Supabase error:', JSON.stringify(supaErr, null, 2));
         throw new Error(
           supaErr.message
             ? `DB error: ${supaErr.message}${supaErr.details ? ` — ${supaErr.details}` : ''}`
             : JSON.stringify(supaErr)
         );
       }
+
+      console.log('[AddProduct] Added successfully:', data);
       onAdded(data);
     } catch (err) {
+      console.error('[AddProduct] handleAdd error:', err);
       setError(err.message || 'Failed to add product.');
     } finally {
       setSaving(false);
@@ -593,7 +709,6 @@ const AddProductModal = ({ onClose, onAdded }) => {
               className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-teal-500 outline-none" />
           </div>
 
-          {/* Category */}
           <div>
             <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">Category</label>
             <select
@@ -610,6 +725,17 @@ const AddProductModal = ({ onClose, onAdded }) => {
 
           <div>
             <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-2">
+              Product Types <span className="text-stone-400 normal-case font-normal ml-1">(shown as "Select Type" on product page)</span>
+              <span className="ml-1 text-stone-400 normal-case font-normal">— {form.variants.length} type{form.variants.length !== 1 ? 's' : ''}</span>
+            </label>
+            <VariantsEditor
+              variants={form.variants}
+              onChange={v => setField('variants', v)}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-2">
               Product Photos
               <span className="ml-1 text-stone-400 normal-case font-normal">
                 ({form.imageUrls.filter(u => !u.startsWith('__uploading__')).length} uploaded)
@@ -617,7 +743,13 @@ const AddProductModal = ({ onClose, onAdded }) => {
             </label>
             <ImageUploadZone
               images={form.imageUrls}
-              onChange={val => setField('imageUrls', typeof val === 'function' ? val(form.imageUrls) : val)}
+              onChange={newVal => {
+                if (typeof newVal === 'function') {
+                  setForm(f => ({ ...f, imageUrls: newVal(f.imageUrls) }));
+                } else {
+                  setField('imageUrls', newVal);
+                }
+              }}
               productName={form.name || 'product'}
             />
           </div>
@@ -646,9 +778,9 @@ export const AdminPanel = ({ onClose, onOpenDashboard }) => {
   const [editingProduct, setEditingProduct] = useState(null);
   const [addingProduct,  setAddingProduct]  = useState(false);
   const [deleteConfirm,  setDeleteConfirm]  = useState(null);
-  const [deleting,  setDeleting]   = useState(false);
-  const [search,    setSearch]     = useState('');
-  const [localProducts, setLocalProducts] = useState(null);
+  const [deleting,       setDeleting]       = useState(false);
+  const [search,         setSearch]         = useState('');
+  const [localProducts,  setLocalProducts]  = useState(null);
   const [updatingCategoryId, setUpdatingCategoryId] = useState(null);
 
   const handleCategoryChange = async (product, newCategory) => {
