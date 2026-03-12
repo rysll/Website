@@ -17,6 +17,7 @@ import {
 } from 'recharts';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+
 const BUCKET = 'product-images';
 
 const CATEGORIES = [
@@ -29,7 +30,7 @@ const CATEGORIES = [
 
 const DELIVERY_STATUSES = ORDER_STATUSES;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ───Helpers ──────────────────────────────────────────────────────────────────
 const statusColor = (status) => {
   switch (status) {
     case 'delivered':  return 'bg-teal-100 text-teal-700';
