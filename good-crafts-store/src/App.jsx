@@ -7,7 +7,7 @@ import { AdminPanel } from './AdminPanel';
 import { AdminLogin } from './AdminLogin';
 import { AdminDashboard } from './AdminDashboard';
 import { OrderTracker } from './OrderTracker';
-import { useOrders } from './OrderContext';
+import { useOrders, getPaymentAmounts } from './OrderContext';
 
 // ── Product Modal Image Slider ────────────────────────────────────────────────
 const ProductModalSlider = ({ images, productName }) => {
@@ -44,9 +44,6 @@ const ProductModalSlider = ({ images, productName }) => {
                 className={`rounded-full transition-all duration-200 ${i === idx ? 'bg-white w-5 h-1.5' : 'bg-white/55 hover:bg-white/80 w-1.5 h-1.5'}`}
               />
             ))}
-          </div>
-          {/* Thumbnail strip at bottom */}
-          <div className="absolute bottom-0 left-0 right-0 flex gap-1.5 px-3 pb-8 justify-center pointer-events-none">
           </div>
           {/* Counter */}
           <div className="absolute top-3 right-3 bg-black/55 text-white text-xs font-semibold px-2.5 py-1 rounded-full z-10">
@@ -146,8 +143,10 @@ const App = () => {
     color: '',
     customText: ''
   });
+  const [customTextError, setCustomTextError] = useState('');
   const [showCheckoutSuccess, setShowCheckoutSuccess] = useState(false);
   const [isCheckoutFormOpen, setIsCheckoutFormOpen] = useState(false);
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [checkoutInfo, setCheckoutInfo] = useState({
     customer_name: '',
     customer_email: '',
@@ -163,16 +162,13 @@ const App = () => {
   const products = getProductsWithIcons();
 
   // ── Hash-based routing: restore view on refresh ──────────────────────────
-  // On mount, read the hash and open the right panel if admin is logged in
   useEffect(() => {
     const hash = window.location.hash;
     if (hash === '#dashboard') {
       if (isAdminLoggedIn) {
         setIsDashboardOpen(true);
       } else {
-        // Not logged in — show login so they can get back to dashboard
         setIsLoginOpen(true);
-        // Clear hash so it doesn't loop
         history.replaceState(null, '', window.location.pathname);
       }
     } else if (hash === '#admin') {
@@ -185,21 +181,18 @@ const App = () => {
     }
   }, [isAdminLoggedIn]);
 
-  // Keep hash in sync with open state
   useEffect(() => {
     if (isDashboardOpen) {
       window.location.hash = 'dashboard';
     } else if (isAdminOpen) {
       window.location.hash = 'admin';
     } else {
-      // Clear hash only if we're not on a product anchor
       if (window.location.hash === '#dashboard' || window.location.hash === '#admin') {
         history.replaceState(null, '', window.location.pathname);
       }
     }
   }, [isDashboardOpen, isAdminOpen]);
 
-  // Listen for browser back/forward navigation
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
@@ -242,21 +235,53 @@ const App = () => {
       color: colorsList[0] || '',
       customText: ''
     });
+    setCustomTextError('');
   };
 
-  const closeProductModal = () => setSelectedProduct(null);
+  const closeProductModal = () => { setSelectedProduct(null); setCustomTextError(''); };
+
+  // Returns true if the selected variant requires name engraving.
+  // A variant requires a name when it has a price modifier (e.g. Laser +₱30).
+  // Free/plain variants (priceMod === 0) never need a name.
+  const requiresName = (variant) => {
+    if (!variant) return false;
+    return Number(variant.priceMod) > 0;
+  };
+
+  // Parse comma-separated names into trimmed, uppercased array
+  const parseNames = (text) => {
+    return text.split(',').map(n => n.trim().toUpperCase()).filter(n => n.length > 0);
+  };
 
   const handleAddToCart = () => {
     if (!selectedProduct || !customization.variant) return;
+
+    // Validate: name is required when variant needs engraving
+    if (requiresName(customization.variant)) {
+      const names = parseNames(customization.customText);
+      if (names.length === 0) {
+        setCustomTextError('Please enter at least one name to engrave.');
+        return;
+      }
+    }
+    setCustomTextError('');
+
     const finalPrice = selectedProduct.basePrice + customization.variant.priceMod;
+    const parsedNames = requiresName(customization.variant)
+      ? parseNames(customization.customText)
+      : [];
+
     const newItem = {
       cartId: Date.now(),
       product: selectedProduct,
       variant: customization.variant,
       color: customization.color,
-      customText: customization.customText,
+      customText: parsedNames.length > 0 ? parsedNames.join(', ') : '',
+      // Store names array for quantity auto-set
+      names: parsedNames,
       price: finalPrice,
-      quantity: 1
+      // Auto-set quantity to number of names if multiple
+      quantity: parsedNames.length > 1 ? parsedNames.length : 1
     };
     setCart([...cart, newItem]);
     closeProductModal();
@@ -285,7 +310,17 @@ const App = () => {
     items.forEach(item => {
       summary += `• ${item.product.name} (${item.variant.name})\n`;
       summary += `  Color: ${item.color}\n`;
-      if (item.customText) summary += `  Name: ${item.customText}\n`;
+      if (item.customText) {
+        const nameList = item.names && item.names.length > 1
+          ? item.names
+          : item.customText.split(',').map(n => n.trim()).filter(Boolean);
+        if (nameList.length > 1) {
+          summary += `  Names (${nameList.length}):\n`;
+          nameList.forEach((n, i) => { summary += `    ${i + 1}. ${n}\n`; });
+        } else {
+          summary += `  Name: ${item.customText}\n`;
+        }
+      }
       summary += `  Qty: ${item.quantity} x ₱${item.price}\n\n`;
     });
     if (order?.id) summary += `Order Number: ${order.id}\n\n`;
@@ -308,21 +343,34 @@ const App = () => {
     document.body.removeChild(textArea);
   };
 
-  // Validate checkout fields
+  // Validate checkout fields — all fields are required; strict email + phone
   const validateCheckout = () => {
     const errors = {};
-    if (!checkoutInfo.customer_name.trim()) errors.customer_name = 'Name is required';
-    if (!checkoutInfo.customer_email.trim()) {
-      errors.customer_email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(checkoutInfo.customer_email)) {
-      errors.customer_email = 'Enter a valid email address';
+
+    // Full name
+    if (!checkoutInfo.customer_name.trim())
+      errors.customer_name = 'Full name is required.';
+
+    // Email — must be present AND well-formed
+    const emailVal = checkoutInfo.customer_email.trim();
+    if (!emailVal) {
+      errors.customer_email = 'Email address is required.';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(emailVal)) {
+      errors.customer_email = 'Please enter a valid email (e.g. maria@gmail.com).';
     }
-    if (!checkoutInfo.customer_phone.trim()) {
-      errors.customer_phone = 'Phone number is required';
-    } else if (!/^(\+?63|0)\d{10}$/.test(checkoutInfo.customer_phone.replace(/\s/g, ''))) {
-      errors.customer_phone = 'Enter a valid PH number (e.g. 09XXXXXXXXX)';
+
+    // Phone — must be present AND a valid PH mobile number
+    const phoneVal = checkoutInfo.customer_phone.replace(/\s|-/g, '');
+    if (!phoneVal) {
+      errors.customer_phone = 'Phone number is required.';
+    } else if (!/^(\+?63|0)[0-9]{10}$/.test(phoneVal)) {
+      errors.customer_phone = 'Enter a valid PH mobile number (e.g. 09171234567 or +639171234567).';
     }
-    if (!checkoutInfo.customer_address.trim()) errors.customer_address = 'Delivery address is required';
+
+    // Delivery address
+    if (!checkoutInfo.customer_address.trim())
+      errors.customer_address = 'Delivery address is required.';
+
     return errors;
   };
 
@@ -333,11 +381,12 @@ const App = () => {
       return;
     }
     setCheckoutErrors({});
+    setIsPlacingOrder(true);
 
     try {
       const orderItems = cart.map(i => ({
         product: { id: i.product.id, name: i.product.name },
-        variant: i.variant,
+        variant: { id: i.variant.id, name: i.variant.name, priceMod: i.variant.priceMod },
         color: i.color,
         customText: i.customText,
         price: i.price,
@@ -361,8 +410,10 @@ const App = () => {
       setIsCheckoutFormOpen(false);
       setCheckoutInfo({ customer_name: '', customer_email: '', customer_phone: '', customer_address: '' });
     } catch (err) {
-      console.error('Failed to create order', err);
-      alert('Unable to place order. Please try again.');
+      console.error('Failed to create order:', err);
+      alert(`Unable to place order: ${err.message || 'An unexpected error occurred. Please try again.'}`);
+    } finally {
+      setIsPlacingOrder(false);
     }
   };
 
@@ -460,11 +511,6 @@ const App = () => {
             { key: 'Stationery', emoji: '✏️', label: 'Stationery' },
             { key: 'Novelty',    emoji: '🎁', label: 'Novelty' },
           ];
-          const counts = {};
-          products.forEach(p => {
-            const c = p.category || 'Uncategorized';
-            counts[c] = (counts[c] || 0) + 1;
-          });
           return (
             <div className="flex flex-wrap justify-center gap-2 mb-10">
               {CATEGORIES.map(cat => {
@@ -588,7 +634,6 @@ const App = () => {
               <X size={20} />
             </button>
             <div className="p-0">
-              {/* ── Product Image Slider ── */}
               {(() => {
                 const imgs = (selectedProduct.image_urls && Array.isArray(selectedProduct.image_urls) && selectedProduct.image_urls.length > 0)
                   ? selectedProduct.image_urls.filter(Boolean)
@@ -640,19 +685,56 @@ const App = () => {
                   </div>
                 </div>
 
-                {customization.variant?.id !== 'plain' && customization.variant?.id !== 'std' && (
+                {requiresName(customization.variant) && (
                   <div>
-                    <label className="block text-sm font-bold text-stone-700 mb-2">
-                      Name/Text to Engrave <span className="text-stone-400 font-normal">(Max 10 chars)</span>
+                    <label className="block text-sm font-bold text-stone-700 mb-1">
+                      Name(s) to Engrave <span className="text-red-500">*</span>
+                      <span className="text-stone-400 font-normal ml-1">(Max 10 chars each)</span>
                     </label>
+                    <p className="text-xs text-stone-500 mb-2">
+                      For multiple names, separate with a comma — e.g. <span className="font-mono bg-stone-100 px-1 rounded">JUAN, MARIA, JOSE</span>
+                    </p>
                     <input
-                      type="text" maxLength={10}
-                      placeholder="Type name here (e.g. T. REZA)"
+                      type="text"
+                      placeholder="e.g. T. REZA  or  JUAN, MARIA, JOSE"
                       value={customization.customText}
-                      onChange={(e) => setCustomization({ ...customization, customText: e.target.value.toUpperCase().trim() })}
-                      className="w-full p-3 border border-stone-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none uppercase tracking-widest placeholder:normal-case"
+                      onChange={(e) => {
+                        setCustomTextError('');
+                        // Allow commas; uppercase everything except the comma+space
+                        const val = e.target.value.toUpperCase();
+                        setCustomization({ ...customization, customText: val });
+                      }}
+                      className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none uppercase tracking-widest placeholder:normal-case ${customTextError ? 'border-red-400 bg-red-50' : 'border-stone-300'}`}
                     />
-                    <p className="text-xs text-stone-400 mt-1">Text will be capitalized automatically.</p>
+                    {customTextError && (
+                      <p className="text-xs text-red-500 mt-1">{customTextError}</p>
+                    )}
+                    {/* Live name tag preview */}
+                    {customization.customText.trim().length > 0 && (() => {
+                      const names = parseNames(customization.customText);
+                      if (names.length === 0) return null;
+                      return (
+                        <div className="mt-2">
+                          <p className="text-xs text-stone-400 mb-1.5">
+                            {names.length === 1 ? '1 name' : `${names.length} names`} — quantity will be set to {names.length}
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {names.map((name, i) => (
+                              <span key={i} className="inline-flex items-center gap-1 bg-teal-50 border border-teal-200 text-teal-800 text-xs font-mono font-semibold px-2.5 py-1 rounded-full">
+                                {name}
+                                {name.length > 10 && (
+                                  <span className="text-red-500 text-xs font-bold">⚠ {name.length}/10</span>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                          {names.some(n => n.length > 10) && (
+                            <p className="text-xs text-red-500 mt-1">⚠ Some names exceed 10 characters. Please shorten them.</p>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    <p className="text-xs text-stone-400 mt-1.5">Names are automatically capitalized.</p>
                   </div>
                 )}
               </div>
@@ -668,7 +750,7 @@ const App = () => {
                   Add to Cart
                 </button>
               </div>
-              </div>{/* close p-6 pt-4 */}
+              </div>
             </div>
           </div>
         </div>
@@ -738,8 +820,12 @@ const App = () => {
                   <span className="font-bold text-stone-800">Total</span>
                   <span className="font-extrabold text-teal-700">₱{cartTotal.toFixed(2)}</span>
                 </div>
+                {/* FIX: close cart before opening checkout form */}
                 <button
-                  onClick={() => setIsCheckoutFormOpen(true)}
+                  onClick={() => {
+                    setIsCartOpen(false);
+                    setIsCheckoutFormOpen(true);
+                  }}
                   className="w-full bg-stone-900 text-white py-3 rounded-xl font-bold hover:bg-stone-800 transition-colors flex items-center justify-center gap-2"
                 >
                   Proceed to Checkout
@@ -814,7 +900,7 @@ const App = () => {
                 {checkoutErrors.customer_address && <p className="text-xs text-red-500 mt-1">{checkoutErrors.customer_address}</p>}
               </div>
 
-              {/* Order Summary + Payment Breakdown */}
+              {/* Order Summary */}
               <div className="bg-stone-50 rounded-xl p-4 border border-stone-100">
                 <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-2">Order Summary</p>
                 {cart.map(item => (
@@ -828,6 +914,7 @@ const App = () => {
                   <span>₱{cartTotal.toFixed(2)}</span>
                 </div>
               </div>
+
               {/* Payment Policy Notice */}
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
                 <p className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -851,15 +938,27 @@ const App = () => {
             <div className="px-6 pb-6 flex gap-3">
               <button
                 onClick={() => { setIsCheckoutFormOpen(false); setCheckoutErrors({}); }}
-                className="flex-1 py-3 border border-stone-200 text-stone-700 rounded-xl font-semibold hover:bg-stone-50 transition-colors text-sm"
+                disabled={isPlacingOrder}
+                className="flex-1 py-3 border border-stone-200 text-stone-700 rounded-xl font-semibold hover:bg-stone-50 transition-colors text-sm disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmOrder}
-                className="flex-1 py-3 bg-teal-600 text-white rounded-xl font-bold hover:bg-teal-700 transition-colors text-sm"
+                disabled={isPlacingOrder}
+                className="flex-1 py-3 bg-teal-600 text-white rounded-xl font-bold hover:bg-teal-700 transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Place Order
+                {isPlacingOrder ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                    </svg>
+                    Placing Order...
+                  </>
+                ) : (
+                  'Place Order'
+                )}
               </button>
             </div>
           </div>

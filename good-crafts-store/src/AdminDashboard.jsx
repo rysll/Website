@@ -559,6 +559,73 @@ const AddProductModal = ({ onClose, onAdded }) => {
   );
 };
 
+// ─── Item Detail Row — reusable component for showing a single order item ─────
+// Shows: product name, type, color, engraved names, qty, price
+const ItemDetailRow = ({ it, idx, showIndex = false }) => {
+  // Parse engraved names — could be comma-separated string or array
+  const names = (() => {
+    if (it.names && Array.isArray(it.names) && it.names.length > 0) return it.names;
+    if (it.customText) return it.customText.split(',').map(n => n.trim()).filter(Boolean);
+    return [];
+  })();
+
+  const CAT_MAP = { Leather:'🪡 Leather', Keychains:'🔑 Keychains', Magnets:'🧲 Magnets', Stationery:'✏️ Stationery', Novelty:'🎁 Novelty' };
+  const category = it.product?.category
+    ? (CAT_MAP[it.product.category] || it.product.category)
+    : null;
+
+  return (
+    <li className="bg-stone-50 rounded-xl px-3 py-3 border border-stone-100 space-y-1.5">
+      {/* Row 1: product name + qty + price */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="font-semibold text-stone-800 text-sm leading-tight">
+          {showIndex && <span className="text-stone-400 font-normal mr-1">#{idx + 1}</span>}
+          {it.product?.name || '—'}
+        </div>
+        <div className="text-right shrink-0">
+          <span className="font-bold text-teal-600 text-sm">₱{((it.price || 0) * (it.quantity || 1)).toFixed(2)}</span>
+          <span className="text-xs text-stone-400 ml-1">×{it.quantity}</span>
+        </div>
+      </div>
+
+      {/* Row 2: type · color · category badges */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {it.variant?.name && (
+          <span className="inline-flex items-center text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200 px-2 py-0.5 rounded-full">
+            {it.variant.name}
+          </span>
+        )}
+        {it.color && (
+          <span className="inline-flex items-center text-xs font-medium bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full">
+            🎨 {it.color}
+          </span>
+        )}
+        {category && (
+          <span className="inline-flex items-center text-xs font-medium bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full">
+            {category}
+          </span>
+        )}
+      </div>
+
+      {/* Row 3: engraved names */}
+      {names.length > 0 && (
+        <div className="pt-0.5">
+          <span className="text-xs text-stone-400 font-medium">
+            {names.length === 1 ? '✏️ Engraved name:' : `✏️ Engraved names (${names.length}):`}
+          </span>
+          <div className="flex flex-wrap gap-1 mt-1">
+            {names.map((name, i) => (
+              <span key={i} className="inline-flex items-center text-xs font-mono font-semibold bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full">
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </li>
+  );
+};
+
 // ─── Mobile Order Card ────────────────────────────────────────────────────────
 const OrderCard = ({ o, updatingId, setUpdatingId, updateOrderStatus, updatePaymentStatus }) => {
   const ps = o.payment_status || 'awaiting_downpayment';
@@ -745,7 +812,7 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
         low_threshold: Number(editInvForm.low_threshold),
       }).eq('id', item.id);
       if (error) throw error;
-      await fetchOrders(); // refresh inventory from OrderContext
+      await fetchOrders();
       setEditingInvId(null);
     } catch (err) {
       alert('Failed to save: ' + err.message);
@@ -827,7 +894,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
       const d = new Date(o.created_at);
       if (d >= sevenDaysAgo) totals[days[d.getDay()]] += Number(o.total);
     });
-    // Build ordered array starting from 7 days ago → today
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(now); d.setDate(now.getDate() - (6 - i));
       const label = days[d.getDay()];
@@ -991,7 +1057,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                   </button>
                 </div>
 
-                {/* Search */}
                 <div className="mb-4">
                   <div className="relative">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
@@ -1027,7 +1092,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                             </div>
                             <p className="text-xs text-stone-400 line-clamp-2 mb-2">{product.description}</p>
 
-                            {/* Category quick selector */}
                             <div className="mb-2">
                               <select value={product.category || ''} disabled={updatingCatId === product.id}
                                 onChange={e => handleCategoryChange(product, e.target.value)}
@@ -1037,7 +1101,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                               </select>
                             </div>
 
-                            {/* Variants badge */}
                             <div className="flex items-center justify-between text-xs text-stone-400 mb-3">
                               <span>Min: {product.minOrder || 1}pcs</span>
                               <span className={`font-semibold px-2 py-0.5 rounded-full ${variants.length > 0 ? 'bg-teal-50 text-teal-600' : 'bg-amber-50 text-amber-600'}`}>
@@ -1062,7 +1125,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                   </div>
                 )}
 
-                {/* Edit Modal */}
                 {editingProduct && (
                   <EditProductModal product={editingProduct} onClose={() => setEditingProduct(null)}
                     onSaved={freshData => {
@@ -1072,7 +1134,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                     }} />
                 )}
 
-                {/* Add Modal */}
                 {addingProduct && (
                   <AddProductModal onClose={() => setAddingProduct(false)}
                     onAdded={newProduct => {
@@ -1082,7 +1143,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                     }} />
                 )}
 
-                {/* Delete Confirm */}
                 {deleteConfirm && (
                   <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60">
                     <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
@@ -1253,7 +1313,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
 
             {/* ═══ DELIVERY TAB ═══ */}
             {activeTab === 'delivery' && (() => {
-              // Local state for per-order delivery fields (courier, type, tracking)
               const DeliveryCard = ({ o }) => {
                 const [courierName,  setCourierName]  = React.useState(o.courier_name  || '');
                 const [deliveryType, setDeliveryType] = React.useState(o.delivery_type || 'delivery');
@@ -1281,7 +1340,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
 
                 return (
                   <div className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4 sm:p-5">
-                    {/* Header */}
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <span className="font-bold text-stone-900 font-mono text-sm">{o.order_number || formatOrderId(o.id)}</span>
@@ -1290,7 +1348,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                       <span className={`text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${statusColor(o.status)}`}>{o.status}</span>
                     </div>
 
-                    {/* Customer info */}
                     <div className="space-y-2 mb-4 border-t border-stone-50 pt-3">
                       {[{ icon: User, label: 'Customer', value: o.customer_name }, { icon: Phone, label: 'Phone', value: o.customer_phone }, { icon: MapPin, label: 'Address', value: o.customer_address }, { icon: Mail, label: 'Email', value: o.customer_email }].map(({ icon: Icon, label, value }) => value ? (
                         <div key={label} className="flex items-start gap-2.5">
@@ -1300,11 +1357,9 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                       ) : null)}
                     </div>
 
-                    {/* ── Delivery Details ── */}
                     <div className="border-t border-stone-100 pt-3 space-y-3">
                       <p className="text-xs font-bold text-stone-500 uppercase tracking-wider">Delivery Details</p>
 
-                      {/* Pickup or Delivery toggle */}
                       <div className="flex rounded-xl border border-stone-200 overflow-hidden">
                         {['pickup', 'delivery'].map(type => (
                           <button key={type} onClick={() => setDeliveryType(type)}
@@ -1314,35 +1369,24 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                         ))}
                       </div>
 
-                      {/* Courier / Rider name */}
                       <div>
                         <label className="block text-xs text-stone-500 mb-1 font-medium">
                           {deliveryType === 'pickup' ? 'Staff who prepared order' : 'Courier / Rider name'}
                         </label>
-                        <input
-                          type="text"
-                          value={courierName}
-                          onChange={e => setCourierName(e.target.value)}
+                        <input type="text" value={courierName} onChange={e => setCourierName(e.target.value)}
                           placeholder={deliveryType === 'pickup' ? 'e.g. Ate Mary' : 'e.g. Juan dela Cruz'}
-                          className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500 outline-none"
-                        />
+                          className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500 outline-none" />
                       </div>
 
-                      {/* Tracking ID — only shown for delivery */}
                       {deliveryType === 'delivery' && (
                         <div>
                           <label className="block text-xs text-stone-500 mb-1 font-medium">Tracking ID <span className="text-stone-300">(Lalamove, J&T, etc.)</span></label>
-                          <input
-                            type="text"
-                            value={trackingId}
-                            onChange={e => setTrackingId(e.target.value)}
+                          <input type="text" value={trackingId} onChange={e => setTrackingId(e.target.value)}
                             placeholder="e.g. LLM-123456789"
-                            className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500 outline-none font-mono"
-                          />
+                            className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500 outline-none font-mono" />
                         </div>
                       )}
 
-                      {/* Save delivery details */}
                       <button onClick={handleSaveDelivery} disabled={saving}
                         className={`w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${saved ? 'bg-teal-500 text-white' : 'bg-stone-800 hover:bg-stone-700 text-white disabled:opacity-60'}`}>
                         {saving ? <><Loader2 size={13} className="animate-spin" /> Saving…</>
@@ -1350,7 +1394,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                          : <><Save size={13} /> Save Delivery Info</>}
                       </button>
 
-                      {/* Update order status */}
                       <div>
                         <p className="text-xs text-stone-500 mb-1.5 font-medium">Order Status</p>
                         <select value={o.status} disabled={isUpdating}
@@ -1402,19 +1445,16 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
             {/* ═══ INVENTORY TAB ═══ */}
             {activeTab === 'inventory' && (
               <div>
-                {/* Header + action buttons */}
                 <div className="mb-5 flex items-start justify-between gap-3 flex-wrap">
                   <div>
                     <h2 className="text-xl sm:text-2xl font-bold text-stone-900">Inventory</h2>
                     <p className="text-stone-500 text-sm mt-1">Track, edit, and manage stock levels</p>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Export CSV */}
                     <button onClick={exportCsv}
                       className="flex items-center gap-1.5 px-3 py-2 border border-stone-200 bg-white text-stone-700 rounded-xl text-xs font-semibold hover:bg-stone-50 transition-colors">
                       <FileDown size={14} /> Export CSV
                     </button>
-                    {/* Import CSV */}
                     <button onClick={() => csvInputRef.current?.click()} disabled={importingCsv}
                       className="flex items-center gap-1.5 px-3 py-2 border border-stone-200 bg-white text-stone-700 rounded-xl text-xs font-semibold hover:bg-stone-50 transition-colors disabled:opacity-60">
                       {importingCsv ? <><Loader2 size={13} className="animate-spin" /> Importing…</> : <><FileUp size={14} /> Import CSV</>}
@@ -1424,7 +1464,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                   </div>
                 </div>
 
-                {/* Stat cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
                   {[
                     { label: 'Total Items',      value: inventory.reduce((s, i) => s + i.qty, 0), icon: Package,       iconColor: 'text-blue-500',  iconBg: 'bg-blue-50'  },
@@ -1438,7 +1477,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                   ))}
                 </div>
 
-                {/* Search + filter */}
                 <div className="flex gap-2 mb-4 flex-wrap">
                   <div className="flex-1 min-w-0 relative">
                     <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
@@ -1453,12 +1491,10 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                   </select>
                 </div>
 
-                {/* CSV import hint */}
                 <div className="mb-4 bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-xs text-stone-500">
                   💡 CSV import columns: <code className="font-mono bg-stone-100 px-1 rounded">product_name</code>, <code className="font-mono bg-stone-100 px-1 rounded">qty</code>, and optionally <code className="font-mono bg-stone-100 px-1 rounded">location</code>, <code className="font-mono bg-stone-100 px-1 rounded">low_threshold</code>
                 </div>
 
-                {/* ── Mobile cards ── */}
                 <div className="sm:hidden space-y-3 pb-10">
                   {filteredInventory.length === 0 ? (
                     <div className="text-center text-stone-400 py-10 text-sm">{inventory.length === 0 ? 'No inventory yet.' : 'No items match.'}</div>
@@ -1519,7 +1555,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                   })}
                 </div>
 
-                {/* ── Desktop table ── */}
                 <div className="hidden sm:block bg-white rounded-2xl border border-stone-100 shadow-sm overflow-x-auto pb-10">
                   <table className="w-full text-sm">
                     <thead>
@@ -1541,27 +1576,14 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                           <tr key={item.id} className={`border-b border-stone-50 transition-colors ${isEditing ? 'bg-teal-50/50' : 'hover:bg-stone-50'} ${i === filteredInventory.length - 1 ? 'border-0' : ''}`}>
                             {isEditing ? (
                               <>
-                                <td className="p-3">
-                                  <input value={editInvForm.product_name} onChange={e => setEditInvForm(f => ({...f, product_name: e.target.value}))}
-                                    className="w-full border border-teal-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-                                </td>
-                                <td className="p-3">
-                                  <input value={editInvForm.location} onChange={e => setEditInvForm(f => ({...f, location: e.target.value}))} placeholder="e.g. Shelf A"
-                                    className="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-                                </td>
-                                <td className="p-3">
-                                  <input type="number" min="0" value={editInvForm.qty} onChange={e => setEditInvForm(f => ({...f, qty: e.target.value}))}
-                                    className="w-20 border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-                                </td>
-                                <td className="p-3">
-                                  <input type="number" min="0" value={editInvForm.low_threshold} onChange={e => setEditInvForm(f => ({...f, low_threshold: e.target.value}))}
-                                    className="w-20 border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-400" />
-                                </td>
+                                <td className="p-3"><input value={editInvForm.product_name} onChange={e => setEditInvForm(f => ({...f, product_name: e.target.value}))} className="w-full border border-teal-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-400" /></td>
+                                <td className="p-3"><input value={editInvForm.location} onChange={e => setEditInvForm(f => ({...f, location: e.target.value}))} placeholder="e.g. Shelf A" className="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-400" /></td>
+                                <td className="p-3"><input type="number" min="0" value={editInvForm.qty} onChange={e => setEditInvForm(f => ({...f, qty: e.target.value}))} className="w-20 border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-400" /></td>
+                                <td className="p-3"><input type="number" min="0" value={editInvForm.low_threshold} onChange={e => setEditInvForm(f => ({...f, low_threshold: e.target.value}))} className="w-20 border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-teal-400" /></td>
                                 <td className="p-3 text-xs text-stone-400 italic">editing…</td>
                                 <td className="p-3">
                                   <div className="flex items-center gap-2">
-                                    <button onClick={() => saveEditInv(item)} disabled={savingInv}
-                                      className="flex items-center gap-1.5 bg-teal-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-teal-700 disabled:opacity-60">
+                                    <button onClick={() => saveEditInv(item)} disabled={savingInv} className="flex items-center gap-1.5 bg-teal-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-teal-700 disabled:opacity-60">
                                       {savingInv ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save
                                     </button>
                                     <button onClick={() => setEditingInvId(null)} className="px-3 py-1.5 border border-stone-200 text-stone-600 rounded-lg text-xs font-semibold hover:bg-stone-50">Cancel</button>
@@ -1570,10 +1592,7 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                               </>
                             ) : (
                               <>
-                                <td className="p-4">
-                                  <div className="font-semibold text-stone-800">{item.product_name}</div>
-                                  <div className="text-xs text-stone-400">ID: {item.product_id}</div>
-                                </td>
+                                <td className="p-4"><div className="font-semibold text-stone-800">{item.product_name}</div><div className="text-xs text-stone-400">ID: {item.product_id}</div></td>
                                 <td className="p-4 text-stone-600 text-sm">{item.location || 'Main Storage'}</td>
                                 <td className="p-4"><span className={`text-xl font-bold ${isLow ? 'text-red-600' : 'text-stone-900'}`}>{item.qty}</span></td>
                                 <td className="p-4 text-stone-500 text-sm">{item.low_threshold ?? 10}</td>
@@ -1596,7 +1615,6 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
                   </table>
                 </div>
 
-                {/* Delete confirm modal */}
                 {deleteInvConfirm && (
                   <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60">
                     <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
@@ -1618,39 +1636,75 @@ export const AdminDashboard = ({ onClose, onOpenPanel }) => {
         </div>
       </main>
 
-      {/* ── ORDER DETAILS MODAL ── */}
+      {/* ── ORDER DETAILS MODAL — FIXED: shows type, color, category, engraved names ── */}
       {detailsOrder && (
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-t-3xl sm:rounded-2xl p-6 w-full sm:max-w-md shadow-2xl max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-lg font-bold text-stone-900">Order {detailsOrder.order_number || formatOrderId(detailsOrder.id)}</h4>
+          <div className="bg-white rounded-t-3xl sm:rounded-2xl p-6 w-full sm:max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h4 className="text-lg font-bold text-stone-900">Order Details</h4>
+                <p className="text-xs text-stone-400 font-mono mt-0.5">{detailsOrder.order_number || formatOrderId(detailsOrder.id)}</p>
+              </div>
               <button onClick={() => setDetailsOrder(null)} className="p-2 hover:bg-stone-100 rounded-full"><X size={18} className="text-stone-500" /></button>
             </div>
-            <div className="space-y-2 text-sm mb-4">
+
+            {/* Order meta */}
+            <div className="space-y-1.5 text-sm mb-5 bg-stone-50 rounded-2xl p-4 border border-stone-100">
               {[
                 { label: 'Status',   value: <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${orderStatusColor(detailsOrder.status)}`}>{detailsOrder.status}</span> },
-                { label: 'Customer', value: detailsOrder.customer_name || '–' },
-                { label: 'Email',    value: detailsOrder.customer_email || '–' },
-                { label: 'Phone',    value: detailsOrder.customer_phone || '–' },
-                { label: 'Address',  value: detailsOrder.customer_address || '–' },
-                { label: 'Total',    value: <span className="font-bold text-teal-600">₱{Number(detailsOrder.total || 0).toFixed(2)}</span> },
                 { label: 'Payment',  value: <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${paymentBadgeColor(detailsOrder.payment_status)}`}>{PAYMENT_LABELS[detailsOrder.payment_status] || '–'}</span> },
+                { label: 'Total',    value: <span className="font-bold text-teal-600">₱{Number(detailsOrder.total || 0).toFixed(2)}</span> },
+                { label: 'Placed',   value: detailsOrder.created_at ? new Date(detailsOrder.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }) : '–' },
               ].map(({ label, value }) => (
-                <div key={label} className="flex justify-between items-center py-1 border-b border-stone-50">
-                  <span className="text-stone-500 text-xs">{label}</span>
-                  <span className="font-medium text-right max-w-[60%]">{value}</span>
+                <div key={label} className="flex justify-between items-center py-1 border-b border-stone-100 last:border-0">
+                  <span className="text-stone-500 text-xs font-medium">{label}</span>
+                  <span className="font-medium text-right">{value}</span>
                 </div>
               ))}
             </div>
-            <p className="text-sm font-semibold text-stone-700 mb-2">Items</p>
-            <ul className="space-y-1.5 mb-5">
-              {detailsOrder.items?.map((it, idx) => (
-                <li key={idx} className="flex justify-between text-sm bg-stone-50 rounded-lg px-3 py-2">
-                  <span className="text-stone-700">{it.product.name} — {it.variant?.name || '–'}</span>
-                  <span className="font-bold text-stone-900">×{it.quantity}</span>
-                </li>
-              ))}
-            </ul>
+
+            {/* Customer info */}
+            <div className="mb-5">
+              <p className="text-xs font-bold text-stone-500 uppercase tracking-wider mb-3">Customer</p>
+              <div className="space-y-2">
+                {[
+                  { icon: User,   label: 'Name',    value: detailsOrder.customer_name },
+                  { icon: Mail,   label: 'Email',   value: detailsOrder.customer_email },
+                  { icon: Phone,  label: 'Phone',   value: detailsOrder.customer_phone },
+                  { icon: MapPin, label: 'Address', value: detailsOrder.customer_address },
+                ].map(({ icon: Icon, label, value }) => value ? (
+                  <div key={label} className="flex items-start gap-2.5">
+                    <div className="w-7 h-7 bg-stone-100 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
+                      <Icon size={13} className="text-stone-500" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-stone-400">{label}</p>
+                      <p className="text-sm font-medium text-stone-800 leading-tight">{value}</p>
+                    </div>
+                  </div>
+                ) : null)}
+              </div>
+            </div>
+
+            {/* Items — full detail */}
+            {detailsOrder.items && detailsOrder.items.length > 0 && (
+              <div className="mb-5">
+                <p className="text-xs font-bold text-stone-500 uppercase tracking-wider mb-3">
+                  Items Ordered
+                  <span className="ml-2 text-teal-600 normal-case font-semibold">({detailsOrder.items.length} {detailsOrder.items.length === 1 ? 'item' : 'items'})</span>
+                </p>
+                <ul className="space-y-3">
+                  {detailsOrder.items.map((it, idx) => (
+                    <ItemDetailRow key={idx} it={it} idx={idx} showIndex={detailsOrder.items.length > 1} />
+                  ))}
+                </ul>
+                <div className="mt-3 flex justify-between items-center pt-3 border-t border-stone-100">
+                  <span className="text-sm font-bold text-stone-700">Order Total</span>
+                  <span className="text-lg font-extrabold text-teal-600">₱{Number(detailsOrder.total || 0).toFixed(2)}</span>
+                </div>
+              </div>
+            )}
+
             <button onClick={() => setDetailsOrder(null)} className="w-full py-2.5 bg-stone-100 text-stone-700 rounded-xl font-semibold hover:bg-stone-200 transition-colors text-sm">Close</button>
           </div>
         </div>

@@ -121,26 +121,64 @@ export const OrderProvider = ({ children }) => {
   const createOrder = async (orderData) => {
     try {
       const { downpayment, remaining } = getPaymentAmounts(orderData.total);
+
+      // Sanitize items to plain JSON to avoid Supabase insert issues
+      const sanitizedItems = JSON.parse(JSON.stringify(orderData.items || []));
+
+      const insertPayload = {
+        items:              sanitizedItems,
+        total:              orderData.total,
+        customer_name:      orderData.customer_name,
+        customer_email:     orderData.customer_email,
+        customer_phone:     orderData.customer_phone,
+        customer_address:   orderData.customer_address,
+        status:             ORDER_STATUSES[0],
+        payment_status:     PAYMENT_STATUSES[0],
+        downpayment_amount: downpayment,
+        remaining_amount:   remaining,
+        created_at:         new Date().toISOString()
+      };
+
+      console.log('Inserting order payload:', insertPayload);
+
       const { data, error: insertError } = await supabase
         .from('orders')
-        .insert([{
-          ...orderData,
-          status:             ORDER_STATUSES[0],
-          payment_status:     PAYMENT_STATUSES[0],
-          downpayment_amount: downpayment,
-          remaining_amount:   remaining,
-          created_at:         new Date().toISOString()
-        }])
-        .select().single();
-      if (insertError) throw insertError;
+        .insert([insertPayload])
+        .select()
+        .single();
 
-      const { data: freshOrder } = await supabase.from('orders').select('*').eq('id', data.id).single();
+      if (insertError) {
+        console.error('Supabase insert error:', insertError);
+        throw new Error(insertError.message || 'Failed to save order to database');
+      }
+
+      // Fetch the fresh order (so order_number trigger is included)
+      const { data: freshOrder, error: fetchErr } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', data.id)
+        .single();
+
+      if (fetchErr) {
+        console.warn('Could not re-fetch order after insert, using insert result:', fetchErr.message);
+      }
+
       const orderWithNumber = freshOrder || data;
       setOrders(prev => [orderWithNumber, ...prev]);
-      deductInventory(orderData.items || []);
-      sendOrderNotification(orderWithNumber, 'order_created').catch(err => console.warn('Email failed:', err));
+
+      // Fire-and-forget side effects — don't let these block or break the order
+      deductInventory(sanitizedItems).catch(err =>
+        console.warn('Inventory deduction failed (non-critical):', err)
+      );
+      sendOrderNotification(orderWithNumber, 'order_created').catch(err =>
+        console.warn('Email notification failed (non-critical):', err)
+      );
+
       return orderWithNumber;
-    } catch (err) { console.error('Error creating order:', err); throw err; }
+    } catch (err) {
+      console.error('Error creating order:', err);
+      throw err;
+    }
   };
 
   const updateOrderStatus = async (orderId, newStatus) => {
@@ -165,7 +203,6 @@ export const OrderProvider = ({ children }) => {
     try {
       if (!PAYMENT_STATUSES.includes(newPaymentStatus)) throw new Error(`Invalid payment status: ${newPaymentStatus}`);
       const extraUpdates = {};
-      // When downpayment is confirmed → advance to order packed
       if (newPaymentStatus === 'downpayment_paid') {
         extraUpdates.status = 'order packed';
       }
@@ -175,7 +212,6 @@ export const OrderProvider = ({ children }) => {
         .eq('id', orderId).select().single();
       if (updateError) throw new Error(updateError.message || 'Payment update failed');
       setOrders(prev => prev.map(o => o.id === orderId ? data : o));
-      // Send payment reminder email when asking for remaining balance
       if (newPaymentStatus === 'awaiting_remaining') {
         sendOrderNotification(data, 'payment_reminder', null).catch(err => console.warn('Reminder email failed:', err));
       }
